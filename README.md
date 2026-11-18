@@ -1,8 +1,13 @@
+> **NEW:** See `MISE_A_JOUR_FR_AR.md` for the YouTube downloader, MP3/MP4 selection, mobile logout, daily quotas, and update instructions.
+
 # ClipStudio Free V2
 
 A responsive public website with English (default), French, Arabic (RTL) and Spanish, automatic light/dark theme, Supabase authentication, per-user projects, history and preferences, and **local browser-based vertical MP4 trimming**.
 
 ## What works
+
+- Authenticated YouTube Downloader: thumbnail and title preview, MP4 (430p/720p/1080p/4K/8K maximum requested), MP3 (192 kbps), download progress, temporary download link. Requires the separate Python backend and permission to download the material.
+- Always-visible mobile sign out and per-user daily quota feedback (failed processing jobs are refunded).
 
 - Public landing page; Try for Free → sign-up/login
 - Supabase Google OAuth, email/password sign-up and login, email recovery
@@ -12,7 +17,7 @@ A responsive public website with English (default), French, Arabic (RTL) and Spa
 
 ## Not yet implemented
 
-- Automatic download of YouTube videos (URL is stored as project reference only)
+- Universal YouTube download support (access can fail due to permissions, formats, or service restrictions)
 - Automatic AI subtitles, smart highlight detection, automatic face tracking
 - Persistent cloud storage of exported MP4 files; only project metadata/history are saved
 - Public multi-user compute backend or admin console
@@ -40,4 +45,3 @@ A responsive public website with English (default), French, Arabic (RTL) and Spa
 **Security:** Supabase Publishable Keys are intended for client use; RLS is mandatory and enabled in the SQL. Never commit a Google OAuth Client Secret, Supabase secret/service_role key, database password, or `.env.local`.
 
 **Troubleshooting `Invalid API key`:** verify the project URL and publishable key from the **same** Supabase project, check spelling via copy button, ensure `.env.local` is next to `package.json`, stop/restart Vite (`Ctrl+C`, `npm.cmd run dev`), then hard refresh. If still failing, inspect Network → failing Supabase request response; do not repeatedly rewrite `main.js`.
-Mise à jour ClipStudio V5
