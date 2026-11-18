@@ -40,4 +40,4 @@ A responsive public website with English (default), French, Arabic (RTL) and Spa
 **Security:** Supabase Publishable Keys are intended for client use; RLS is mandatory and enabled in the SQL. Never commit a Google OAuth Client Secret, Supabase secret/service_role key, database password, or `.env.local`.
 
 **Troubleshooting `Invalid API key`:** verify the project URL and publishable key from the **same** Supabase project, check spelling via copy button, ensure `.env.local` is next to `package.json`, stop/restart Vite (`Ctrl+C`, `npm.cmd run dev`), then hard refresh. If still failing, inspect Network → failing Supabase request response; do not repeatedly rewrite `main.js`.
-Mise à jour ClipStudio V3
+Mise à jour ClipStudio V2
