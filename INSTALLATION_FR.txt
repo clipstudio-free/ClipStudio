@@ -1,0 +1,15 @@
+CLIPSTUDIO FREE V2 — INSTALLATION SIMPLE
+
+1. Installe Node.js LTS : https://nodejs.org/
+2. Décompresse le ZIP.
+3. Ouvre le dossier ClipStudio_V2, puis clique dans la barre d'adresse, écris powershell et appuie sur Entrée.
+4. Tape : npm.cmd install
+5. Copie .env.example et renomme la copie .env.local
+6. Ouvre .env.local et colle la VRAIE URL du projet et la Publishable Key depuis Supabase.
+7. Supabase → SQL Editor → colle le contenu de supabase/schema.sql → Run.
+8. Supabase → Authentication → URL Configuration : Site URL http://localhost:5173 ; Redirect URLs http://localhost:5173/**
+9. Dans PowerShell : npm.cmd run dev
+10. Ouvre http://localhost:5173
+
+IMPORTANT : Ne mets jamais de secret Google ou de clé Supabase secret/service_role dans .env.local.
+L'export MP4 fonctionne depuis un fichier vidéo local. Les URL YouTube sont seulement enregistrées comme références. Les sous-titres IA ne sont pas encore inclus.

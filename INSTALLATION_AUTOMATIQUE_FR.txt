@@ -1,0 +1,22 @@
+CLIPSTUDIO — GENERATION AUTOMATIQUE (WINDOWS 11)
+
+1) Extraire le ZIP. Garder l'ancien projet comme sauvegarde.
+2) Copier votre .env.local existant dans ClipStudio_V2 (à côté de package.json). Ne jamais mettre sb_secret ni Google client_secret dans ce fichier.
+3) Installer Python 3.11+ (cocher Add Python to PATH) : https://www.python.org/downloads/windows/
+4) Installer FFmpeg (FFmpeg ET ffprobe dans PATH). Dans PowerShell, vérifier : ffmpeg -version ; ffprobe -version
+   Option Windows 11 si winget disponible : winget install Gyan.FFmpeg
+   Fermer puis rouvrir PowerShell après installation.
+5) Double-cliquer backend/start_windows.bat. Laisser cette fenêtre ouverte. Au premier lancement, les bibliothèques Python s'installent. Au premier traitement, faster-whisper télécharge le modèle base (connexion Internet requise).
+6) Dans le dossier ClipStudio_V2, ouvrir PowerShell et lancer : npm.cmd install ; npm.cmd run dev
+7) Ouvrir http://localhost:5173, se connecter, New Clip. Coller un lien YouTube public OU sélectionner un MP4 local. Cliquer sur Generate 4 Shorts automatically.
+8) Attendre les 4 aperçus et cliquer Download MP4.
+
+LIMITES ET PRÉCISIONS
+- Ce système utilise yt-dlp côté PC pour tenter d'accéder aux vidéos YouTube publiques. Certains liens ne marcheront pas (restrictions, accès, protections, changements YouTube). Pas de garantie « n'importe quelle vidéo ».
+- Utiliser uniquement des vidéos que vous êtes autorisé à télécharger, modifier et republier. Respecter les conditions YouTube et droits d'auteur.
+- Quatre extraits choisis automatiquement selon la densité de paroles, PAS encore une IA de classement sémantique des meilleurs moments.
+- Cadrage 9:16 central, PAS encore de suivi de visage.
+- Sous-titres transcrits automatiquement avec faster-whisper et incrustés dans le MP4 en jaune avec animation pop par mot ; police Arial (la disponibilité de Arial Black dépend du système), taille ASS 40. La langue est détectée automatiquement. Le moteur de rendu est distinct de la prévisualisation du site.
+- Exports enregistrés localement dans backend/work; ils ne sont PAS synchronisés avec Supabase. La gestion de compte et la bibliothèque existante restent inchangées.
+- Limite 500 Mo pour fichier local, YouTube 2 heures; traitement local gourmand en CPU. Le moteur n'est accessible que sur 127.0.0.1:8765 et n'est pas prévu pour un hébergement public.
+- Ne pas mettre en ligne ce backend sans ajouter authentification, quotas, stockage protégé et contrôles de sécurité.
