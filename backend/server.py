@@ -1,5 +1,5 @@
-import os, re, json, uuid, shutil, subprocess, threading, time
-from datetime import datetime, timezone
+import os, re, json, uuid, shutil, subprocess, threading, time, secrets, hmac, traceback
+from datetime import datetime, timezone, timedelta
 import httpx
 from dotenv import load_dotenv
 from pathlib import Path
@@ -20,7 +20,8 @@ jobs={}
 lock=threading.Lock()
 active_users=set()
 usage={}
-MAX_DAILY=max(1,min(10,int(os.getenv('MAX_JOBS_PER_DAY','3'))))
+MAX_DAILY=max(0,min(100,int(os.getenv('MAX_JOBS_PER_DAY','20'))))
+MAX_DOWNLOADS_DAILY=max(0,min(100,int(os.getenv('MAX_DOWNLOADS_PER_DAY','10'))))
 MAX_ACTIVE=max(1,min(2,int(os.getenv('MAX_ACTIVE_JOBS','1'))))
 JOB_TTL=max(600,min(86400,int(os.getenv('JOB_TTL_SECONDS','3600'))))
 # Allow source videos up to five hours; keep a bounded download/upload size.
@@ -57,8 +58,49 @@ def cleanup():
             if key[1]!=datetime.now(timezone.utc).date().isoformat():usage.pop(key,None)
     for key in expired:shutil.rmtree(WORK/key,ignore_errors=True)
 
+def utc_day():
+    return datetime.now(timezone.utc).date().isoformat()
+
+def daily_reset_utc():
+    return (datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).isoformat().replace('+00:00','Z')
+
+def reserve_work(uid, kind):
+    # A failed job will be refunded; successful jobs count for that UTC day.
+    limit = MAX_DAILY if kind == 'shorts' else MAX_DOWNLOADS_DAILY
+    date = utc_day()
+    key = (uid, date, kind)
+    with lock:
+        if uid in active_users:
+            raise HTTPException(429, 'You already have a processing job in progress on this account')
+        if len(active_users) >= MAX_ACTIVE:
+            raise HTTPException(503, 'Generator is busy. Please retry later')
+        if limit and usage.get(key, 0) >= limit:
+            raise HTTPException(429, f'Daily {kind} limit reached ({limit}). Resets at 00:00 UTC: {daily_reset_utc()}')
+        active_users.add(uid)
+        usage[key] = usage.get(key, 0) + 1
+    return date
+
+def refund_work(uid, date, kind):
+    with lock:
+        key = (uid, date, kind)
+        usage[key] = max(0, usage.get(key, 0) - 1)
+
 def finish_user(uid):
     with lock:active_users.discard(uid)
+
+@app.get('/limits')
+def limits(uid:str=Depends(current_user)):
+    cleanup()
+    day=utc_day()
+    with lock:
+        shorts_used=usage.get((uid,day,'shorts'),0)
+        downloads_used=usage.get((uid,day,'downloads'),0)
+        processing=uid in active_users
+    return {
+        'shorts':{'used':shorts_used,'limit':MAX_DAILY,'remaining':max(0,MAX_DAILY-shorts_used) if MAX_DAILY else None},
+        'downloads':{'used':downloads_used,'limit':MAX_DOWNLOADS_DAILY,'remaining':max(0,MAX_DOWNLOADS_DAILY-downloads_used) if MAX_DOWNLOADS_DAILY else None},
+        'reset_utc':daily_reset_utc(), 'processing':processing
+    }
 
 def run(args,cwd=None):
     p=subprocess.run(args,cwd=cwd,capture_output=True,text=True,encoding='utf-8',errors='replace')
@@ -103,7 +145,7 @@ def generate(job,source,seconds,uid):
             host=(urlparse(source).hostname or '').lower()
             if host not in {'youtube.com','www.youtube.com','m.youtube.com','youtu.be'}:
                 raise RuntimeError('Only public YouTube URLs are accepted')
-            opts={'format':'136+140/bv*[height<=720]+ba/b','outtmpl':str(folder/'source.%(ext)s'),'noplaylist':True,'max_filesize':MAX_VIDEO_FILE_BYTES,'quiet':True,'merge_output_format':'mp4','restrictfilenames':True,'socket_timeout':30}
+            opts={'format':'bv*[height<=720]+ba/b[height<=720]/b','outtmpl':str(folder/'source.%(ext)s'),'noplaylist':True,'max_filesize':MAX_VIDEO_FILE_BYTES,'quiet':True,'merge_output_format':'mp4','restrictfilenames':True,'socket_timeout':30}
             with YoutubeDL(opts) as ydl:
                 info=ydl.extract_info(source,download=False)
                 if info.get('duration',0)>MAX_VIDEO_SECONDS:raise RuntimeError('Video longer than 5 hours is not supported')
@@ -154,7 +196,9 @@ def generate(job,source,seconds,uid):
             outputs.append({'url':f'/files/{job}/clip{i}.mp4','start':round(start,1),'duration':round(clip_len,1)})
         jobs[job].update(status='done',progress='Finished',clips=outputs)
     except Exception as e:
+        traceback.print_exc()
         jobs[job].update(status='error',progress=str(e)[:500])
+        refund_work(uid, jobs[job]['quota_day'], 'shorts')
     finally:
         finish_user(uid)
 
@@ -183,13 +227,7 @@ async def start(url:str=Form(''),file:UploadFile|None=File(None),seconds:int=For
     if seconds not in (15,30,45,60):raise HTTPException(400,'Invalid clip duration')
     source_url = validate_youtube_link(url) if not file else ''
     cleanup()
-    today=datetime.now(timezone.utc).date().isoformat()
-    with lock:
-        if uid in active_users:raise HTTPException(429,'You already have a generation in progress')
-        if len(active_users)>=MAX_ACTIVE:raise HTTPException(503,'Generator is busy. Please retry later')
-        if usage.get((uid,today),0)>=MAX_DAILY:raise HTTPException(429,'Daily free generation limit reached')
-        active_users.add(uid)
-        usage[(uid,today)]=usage.get((uid,today),0)+1
+    reserved_day=reserve_work(uid,'shorts')
     job=uuid.uuid4().hex; folder=WORK/job;folder.mkdir(exist_ok=True)
     source=source_url
     try:
@@ -206,10 +244,11 @@ async def start(url:str=Form(''),file:UploadFile|None=File(None),seconds:int=For
                   out.write(chunk)
           source=str(path)
     except Exception:
+        refund_work(uid,reserved_day,'shorts')
         finish_user(uid)
         shutil.rmtree(folder,ignore_errors=True)
         raise
-    jobs[job]={'owner':uid,'created':time.time(),'status':'queued','progress':'Waiting','clips':[],'percentages':[0,0,0,0]}
+    jobs[job]={'owner':uid,'created':time.time(),'quota_day':reserved_day,'status':'queued','progress':'Waiting','clips':[],'percentages':[0,0,0,0]}
     threading.Thread(target=generate,args=(job,source,seconds,uid),daemon=True).start()
     return {'job_id':job}
 
@@ -218,7 +257,7 @@ def status(job:str,uid:str=Depends(current_user)):
     cleanup()
     data=jobs.get(job)
     if not data or data['owner']!=uid:raise HTTPException(404,'Job not found')
-    return {key:value for key,value in data.items() if key not in ('owner','created')}
+    return {key:value for key,value in data.items() if key not in ('owner','created','quota_day','download_file','download_token','token_expiry')}
 
 @app.get('/files/{job}/{filename}')
 def download(job:str,filename:str,uid:str=Depends(current_user)):
@@ -230,3 +269,140 @@ def download(job:str,filename:str,uid:str=Depends(current_user)):
     if data['status']!='done' or not path.is_file():raise HTTPException(404,'File not ready')
     return FileResponse(path,media_type='video/mp4',filename=filename)
 
+
+
+# ---------------------------------------------
+# YouTube media preview and download (authorized content only)
+# ---------------------------------------------
+VIDEO_QUALITIES={430,720,1080,2160,4320}
+
+def safe_thumbnail(info):
+    # Only serve YouTube CDN artwork; never pass arbitrary remote URLs to the UI.
+    image=info.get('thumbnail') or ''
+    try:
+        target=urlparse(image)
+        if target.scheme=='https' and target.hostname in {'i.ytimg.com','img.youtube.com','i1.ytimg.com','i2.ytimg.com','i3.ytimg.com','i4.ytimg.com'}:
+            return image
+    except ValueError:
+        pass
+    return ''
+
+def youtube_information(url):
+    opts={'quiet':True,'no_warnings':True,'noplaylist':True,'skip_download':True,'socket_timeout':30,
+          'extract_flat':False}
+    with YoutubeDL(opts) as ydl:
+        info=ydl.extract_info(url,download=False)
+    if not isinstance(info,dict) or info.get('is_live') or info.get('live_status')=='is_live':
+        raise ValueError('Live streams are not supported while they are live')
+    if (info.get('duration') or 0)>MAX_VIDEO_SECONDS:
+        raise ValueError('Video longer than 5 hours is not supported')
+    return info
+
+@app.post('/media/info')
+def media_info(url:str=Form(...),uid:str=Depends(current_user)):
+    link=validate_youtube_link(url)
+    try:
+        info=youtube_information(link)
+    except Exception as e:
+        raise HTTPException(422,'Could not access the YouTube video. Check that it is public and permitted.') from e
+    heights=sorted(set(int(f['height']) for f in info.get('formats',[]) if isinstance(f.get('height'),int) and f['height']>0 and f.get('vcodec')!='none'))
+    return {'title':str(info.get('title') or 'YouTube video')[:200],
+            'thumbnail':safe_thumbnail(info),
+            'duration':info.get('duration'),
+            'channel':str(info.get('uploader') or '')[:100],
+            'heights':heights,
+            'has_audio':any(f.get('acodec') not in ('none',None) for f in info.get('formats',[]))}
+
+def run_media_download(job,url,media_format,quality,uid):
+    folder=WORK/job
+    try:
+        jobs[job].update(status='downloading',progress='Connecting to YouTube',percent=0)
+        def hook(update):
+            if update.get('status')=='downloading':
+                total=update.get('total_bytes') or update.get('total_bytes_estimate')
+                so_far=update.get('downloaded_bytes',0)
+                if total:
+                    pct=int(85*so_far/total)
+                    jobs[job]['percent']=max(jobs[job]['percent'],min(85,pct))
+                jobs[job]['progress']='Downloading media'
+            if update.get('status')=='finished':
+                jobs[job].update(progress='Preparing MP4/MP3',percent=90)
+        opts={'outtmpl':str(folder/'download.%(ext)s'),'quiet':True,'noplaylist':True,
+              'restrictfilenames':True,'socket_timeout':30,'max_filesize':MAX_VIDEO_FILE_BYTES,
+              'progress_hooks':[hook],
+              'overwrites':True}
+        if media_format=='mp3':
+            opts['format']='bestaudio/best'
+            opts['postprocessors']=[{'key':'FFmpegExtractAudio','preferredcodec':'mp3','preferredquality':'192'}]
+        else:
+            opts['format']=(f'bv*[height<={quality}][ext=mp4]+ba[ext=m4a]/'
+                            f'bv*[height<={quality}]+ba/'
+                            f'b[height<={quality}]')
+            opts['merge_output_format']='mp4'
+            # Convert only if the selected source is not already MP4.
+            opts['postprocessors']=[{'key':'FFmpegVideoConvertor','preferedformat':'mp4'}]
+        with YoutubeDL(opts) as ydl:
+            info=ydl.extract_info(url,download=False)
+            if info.get('is_live') or info.get('live_status')=='is_live':
+                raise RuntimeError('Live streams are not supported while they are live')
+            if (info.get('duration') or 0)>MAX_VIDEO_SECONDS:
+                raise RuntimeError('Video longer than 5 hours is not supported')
+            ydl.download([url])
+        outputs=[p for p in folder.glob('download.*') if p.is_file() and p.suffix.lower()==('.mp3' if media_format=='mp3' else '.mp4')]
+        if not outputs:
+            raise RuntimeError('Requested format unavailable. Choose a lower quality or MP3.')
+        path=outputs[0]
+        if path.stat().st_size>MAX_VIDEO_FILE_BYTES:
+            raise RuntimeError('File larger than 5 GiB. Choose a lower quality.')
+        token=secrets.token_urlsafe(24)
+        jobs[job].update(status='done',progress='Ready to download',percent=100,
+                         download_file=path.name,download_token=token,token_expiry=time.time()+1800,
+                         url=f'/media/file/{job}/{token}',filename=('clipstudio-audio.mp3' if media_format=='mp3' else 'clipstudio-video.mp4'),
+                         size_bytes=path.stat().st_size)
+    except Exception as e:
+        traceback.print_exc()
+        refund_work(uid,jobs[job]['quota_day'],'downloads')
+        jobs[job].update(status='error',progress=str(e)[:400])
+    finally:
+        finish_user(uid)
+
+@app.post('/media/download')
+def media_download(url:str=Form(...),format:str=Form('mp4'),quality:int=Form(720),
+                   rights_confirmed:bool=Form(False),uid:str=Depends(current_user)):
+    if not rights_confirmed:
+        raise HTTPException(400,'Confirm you own or have permission to download this video')
+    link=validate_youtube_link(url)
+    if format not in {'mp3','mp4'}:
+        raise HTTPException(400,'Choose MP3 or MP4')
+    if quality not in VIDEO_QUALITIES:
+        raise HTTPException(400,'Unsupported quality')
+    if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
+        raise HTTPException(503,'FFmpeg and ffprobe are needed on the backend')
+    cleanup()
+    day=reserve_work(uid,'downloads')
+    job=uuid.uuid4().hex
+    try:
+        (WORK/job).mkdir(exist_ok=True)
+        jobs[job]={'owner':uid,'created':time.time(),'quota_day':day,
+                   'status':'queued','progress':'Waiting','percent':0}
+        threading.Thread(target=run_media_download,args=(job,link,format,quality,uid),daemon=True).start()
+        return {'job_id':job}
+    except Exception:
+        refund_work(uid,day,'downloads')
+        finish_user(uid)
+        shutil.rmtree(WORK/job,ignore_errors=True)
+        raise
+
+@app.get('/media/file/{job}/{token}')
+def media_file(job:str,token:str):
+    # Temporary capability link avoids loading multi-GB files into browser memory.
+    cleanup()
+    data=jobs.get(job)
+    if not data or data.get('status')!='done' or time.time()>data.get('token_expiry',0):
+        raise HTTPException(404,'Link expired or file not ready')
+    if not hmac.compare_digest(token,data.get('download_token','')):
+        raise HTTPException(404,'Invalid download link')
+    path=WORK/job/data['download_file']
+    if not path.is_file():
+        raise HTTPException(404,'File not found')
+    return FileResponse(path,media_type='audio/mpeg' if path.suffix=='.mp3' else 'video/mp4',filename=data['filename'])

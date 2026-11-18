@@ -3,3 +3,56 @@
 
 /* Subtitle preview (not embedded in export) */
 .preview-frame{position:relative;overflow:hidden}.caption-overlay{position:absolute;left:5%;right:5%;bottom:15%;display:flex;gap:.22em;justify-content:center;align-items:center;flex-wrap:wrap;pointer-events:none;line-height:1.05;text-align:center;z-index:4;text-shadow:0 2px 5px #000,0 0 4px #000;overflow-wrap:anywhere}.caption-center{bottom:45%}.caption-top{bottom:auto;top:12%}.caption-word{display:inline-block;font-size:inherit;font-weight:900;transform-origin:center bottom}.caption-boxed .caption-word{background:#101820aa;border-radius:5px;padding:2px 3px}.caption-word.active{filter:brightness(1.2)}.caption-word.pop{animation:clip-pop .28s ease-out}@keyframes clip-pop{0%{transform:scale(.7)}65%{transform:scale(1.24)}100%{transform:scale(1)}}.subtitle-controls{border:1px solid var(--line);border-radius:14px;padding:14px;margin:8px 0}.subtitle-controls legend{font-weight:800}.subtitle-controls label{display:grid;gap:6px;margin:8px 0}.subtitle-controls small{color:var(--muted);line-height:1.4;display:block}.subtitle-controls input[type=color]{width:100%;height:44px;padding:4px}
+
+/* Four independently reported FFmpeg encoding progress bars */
+.auto-progress{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0}
+.clip-progress{padding:12px;border:1px solid #7775;border-radius:12px;min-width:0}
+.clip-progress-heading{display:flex;justify-content:space-between;gap:8px;margin-bottom:8px}
+.clip-progress progress{width:100%;height:13px;accent-color:#fb7440}
+@media(max-width:550px){.auto-progress{grid-template-columns:1fr}}
+
+/* ClipStudio V4: responsive download workspace and always-visible sign out */
+.workspace-head-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.mobile-signout{display:none}
+.settings-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px}
+.settings-logout{flex-shrink:0}
+.quick-media-link{margin:18px 0 6px}
+.media-panel{max-width:900px}
+.media-panel form{display:grid;gap:18px}
+.media-panel input[type=url]{width:100%}
+.media-panel .media-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.media-panel label{display:grid;gap:9px}
+.media-panel label[hidden]{display:none !important}
+.media-preview{display:flex;align-items:center;gap:20px;padding:14px;background:var(--panel);border:1px solid var(--line);border-radius:18px;overflow:hidden}
+.media-preview[hidden]{display:none}
+.media-preview img{width:220px;max-width:44%;aspect-ratio:16/9;object-fit:cover;border-radius:12px;background:#111}
+.media-preview strong{display:block;font-size:17px;overflow-wrap:anywhere}
+.media-preview p,.media-preview small{color:var(--muted);display:block;margin:8px 0;overflow-wrap:anywhere}
+.media-muted{color:var(--muted);font-size:13px;line-height:1.6}
+.media-panel .media-confirm{display:flex;align-items:flex-start;gap:10px;line-height:1.45}
+.media-confirm input{flex:0 0 18px;width:18px;height:18px;accent-color:var(--pink);margin:3px 0 0}
+.media-start{width:fit-content;min-width:230px}
+.media-status{margin:14px 0;font-weight:700;overflow-wrap:anywhere}
+#media-progress{width:100%;height:16px;accent-color:var(--pink)}
+.media-result{margin:14px 0}
+.media-result a{display:inline-block;text-decoration:none}
+.quota-feedback{border:1px solid var(--line);border-radius:12px;padding:12px;font-size:13px;line-height:1.6;color:var(--muted);margin:14px 0;overflow-wrap:anywhere}
+.media-warning{margin:18px 0 0}
+@media(max-width:850px){
+ .mobile-signout{display:inline-flex;align-items:center;justify-content:center;white-space:nowrap;flex-shrink:0}
+ .workspace-head{display:flex;flex-direction:column;align-items:stretch;gap:12px;margin-bottom:22px}
+ .workspace-head-actions{width:100%;justify-content:space-between;gap:6px}
+ .workspace-head-actions #quick-lang{max-width:108px;flex-shrink:1}
+ .workspace-head-actions .btn{padding:10px 12px;font-size:13px}
+ .workspace-head-actions .icon-button{padding:9px}
+ .sidebar{gap:6px}
+ .sidebar .side-link{font-size:13px}
+}
+@media(max-width:550px){
+ .media-panel{padding:18px}
+ .media-panel .media-options{grid-template-columns:1fr}
+ .media-preview{display:grid;gap:12px}
+ .media-preview img{width:100%;max-width:none}
+ .media-start{width:100%}
+ .clip-progress-heading{display:flex;justify-content:space-between;align-items:center;gap:8px}
+}
