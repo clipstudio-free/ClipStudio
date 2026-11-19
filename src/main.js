@@ -196,7 +196,31 @@ function initSubtitlePreview(){
 }
 
 const GENERATOR_API=String(import.meta.env.VITE_GENERATOR_API_URL||'http://127.0.0.1:8765').trim().replace(/\/+$/,'');
-async function generatorHeaders(){const {data,error}=await supabase.auth.getSession();if(error||!data.session?.access_token)throw new Error('Please sign in again');return {Authorization:'Bearer '+data.session.access_token};}
+async function generatorHeaders() {
+  if (!supabase) {
+    throw new Error('Supabase is not configured');
+  }
+
+  const { data, error } = await supabase.auth.getUser();
+
+  if (error || !data?.user) {
+    throw new Error('Session invalid. Please sign in again.');
+  }
+
+  const { data: sessionData, error: sessionError } =
+    await supabase.auth.getSession();
+
+  if (sessionError || !sessionData?.session?.access_token) {
+    throw new Error('No valid session. Please sign in again.');
+  }
+
+  console.log('Supabase project:', new URL(endpoint).hostname);
+  console.log('Authenticated user:', Boolean(data.user));
+
+  return {
+    Authorization: 'Bearer ' + sessionData.session.access_token
+  };
+}
 async function refreshQuota(){
  const slot=document.querySelector('#quota-feedback'); if(!slot||!supabase)return;
  try{
