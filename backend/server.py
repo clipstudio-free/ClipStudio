@@ -1,4 +1,4 @@
-import os, re, json, uuid, shutil, subprocess, threading, time, secrets, hmac, traceback
+import os, re, json, uuid, shutil, subprocess, threading, time, secrets, hmac, traceback, zipfile
 from queue import Queue
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
@@ -18,6 +18,7 @@ WORK=ROOT/'work'; WORK.mkdir(exist_ok=True)
 @asynccontextmanager
 async def lifespan(application):
     start_worker_pools()
+    threading.Thread(target=abandoned_job_monitor,daemon=True,name='clipstudio-abandoned-monitor').start()
     yield
 
 app=FastAPI(title='ClipStudio generator API', docs_url=None, redoc_url=None,
@@ -37,8 +38,8 @@ usage={}
 MAX_DAILY=max(0,min(100,int(os.getenv('MAX_JOBS_PER_DAY','20'))))
 MAX_DOWNLOADS_DAILY=max(0,min(100,int(os.getenv('MAX_DOWNLOADS_PER_DAY','10'))))
 # Keep actual heavy processing bounded for a home PC; accept more people via queues.
-MAX_CONCURRENT_SHORTS=max(1,min(4,int(os.getenv('MAX_CONCURRENT_SHORTS','4'))))
-MAX_CONCURRENT_DOWNLOADS=max(1,min(6,int(os.getenv('MAX_CONCURRENT_DOWNLOADS','4'))))
+MAX_CONCURRENT_SHORTS=max(1,min(4,int(os.getenv('MAX_CONCURRENT_SHORTS','1'))))
+MAX_CONCURRENT_DOWNLOADS=max(1,min(6,int(os.getenv('MAX_CONCURRENT_DOWNLOADS','2'))))
 MAX_ACCEPTED_JOBS=max(4,min(200,int(os.getenv('MAX_ACCEPTED_JOBS','100'))))
 MAX_JOBS_PER_USER=max(1,min(5,int(os.getenv('MAX_JOBS_PER_USER','2'))))
 MAX_LOCAL_UPLOADS=max(1,min(4,int(os.getenv('MAX_LOCAL_UPLOADS','2'))))
@@ -46,6 +47,67 @@ JOB_TTL=max(600,min(86400,int(os.getenv('JOB_TTL_SECONDS','3600'))))
 # Allow source videos up to five hours; keep a bounded download/upload size.
 MAX_VIDEO_SECONDS = 5 * 60 * 60
 MAX_VIDEO_FILE_BYTES = 5 * 1024 * 1024 * 1024  # 5 GiB
+# Stop abandoned work after the browser stops reporting status.
+JOB_HEARTBEAT_TIMEOUT=max(30,min(600,int(os.getenv('JOB_HEARTBEAT_TIMEOUT','90'))))
+FAST_TRANSCRIPTION_MODEL=os.getenv('FAST_TRANSCRIPTION_MODEL','tiny')
+TRANSCRIPTION_SAMPLE_SECONDS=max(30,min(180,int(os.getenv('TRANSCRIPTION_SAMPLE_SECONDS','75'))))
+_whisper_model=None
+_whisper_lock=threading.Lock()
+class CancelledJob(Exception):
+    pass
+
+def check_cancel(job_id):
+    job=jobs.get(job_id)
+    if not job or job.get('cancel_requested'):
+        raise CancelledJob('Job cancelled')
+    if job.get('status') not in ('done','error','cancelled') and time.time()-job.get('last_seen',job['created'])>JOB_HEARTBEAT_TIMEOUT:
+        job['cancel_requested']=True
+        raise CancelledJob('Browser disconnected; job stopped')
+
+def get_whisper():
+    global _whisper_model
+    with _whisper_lock:
+        if _whisper_model is None:
+            from faster_whisper import WhisperModel
+            _whisper_model=WhisperModel(FAST_TRANSCRIPTION_MODEL,device='cpu',compute_type='int8',num_workers=1)
+        return _whisper_model
+
+def cancelled_job(job_id,uid,kind,is_upload=False):
+    job=jobs.get(job_id)
+    if job and job.get('status')!='cancelled':
+        job.update(status='cancelled',progress='Cancelled; resources released',finished_at=time.time())
+        refund_work(uid,job['quota_day'],kind)
+    finish_user(uid,is_upload)
+    shutil.rmtree(WORK/job_id,ignore_errors=True)
+
+def ffmpeg_with_cancel(cmd,job_id,cwd=None,on_line=None):
+    import tempfile
+    with tempfile.TemporaryFile(mode='w+t',encoding='utf-8') as errors:
+        proc=subprocess.Popen(cmd,cwd=cwd,stdout=subprocess.PIPE,stderr=errors,text=True,encoding='utf-8',errors='replace')
+        stop=threading.Event()
+        def watch():
+            while not stop.wait(0.5):
+                try: check_cancel(job_id)
+                except CancelledJob:
+                    if proc.poll() is None:proc.terminate()
+                    return
+        watcher=threading.Thread(target=watch,daemon=True);watcher.start()
+        try:
+            for line in proc.stdout:
+                if on_line:on_line(line)
+            rc=proc.wait()
+            check_cancel(job_id)
+            if rc:
+                errors.seek(0)
+                raise RuntimeError('FFmpeg failed: '+errors.read()[-1200:])
+        finally:
+            stop.set()
+            if proc.poll() is None:
+                proc.terminate()
+                try:proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:proc.kill();proc.wait()
+            watcher.join(timeout=1)
+
 SUPABASE_URL=os.getenv('SUPABASE_URL','').rstrip('/')
 SUPABASE_PUBLISHABLE_KEY=os.getenv('SUPABASE_PUBLISHABLE_KEY','')
 if not SUPABASE_URL or not SUPABASE_PUBLISHABLE_KEY:
@@ -71,11 +133,32 @@ def current_user(authorization: str|None=Header(None)):
 def cleanup():
     now=time.time()
     with lock:
-        expired=[key for key,job in jobs.items() if job['status'] in ('done','error') and now-job.get('finished_at',job['created'])>JOB_TTL]
+        expired=[key for key,job in jobs.items() if job['status'] in ('done','error','cancelled') and now-job.get('finished_at',job['created'])>JOB_TTL]
         for key in expired:jobs.pop(key,None)
         for key in list(usage):
             if key[1]!=datetime.now(timezone.utc).date().isoformat():usage.pop(key,None)
     for key in expired:shutil.rmtree(WORK/key,ignore_errors=True)
+
+def abandoned_job_monitor():
+    while True:
+        time.sleep(10)
+        now=time.time()
+        expired_queued=[]
+        with lock:
+            for job_id,data in list(jobs.items()):
+                if data.get('status') in ('done','error','cancelled'):continue
+                if now-data.get('last_seen',data['created'])<=JOB_HEARTBEAT_TIMEOUT:continue
+                data['cancel_requested']=True
+                if data['status']=='queued':
+                    data.update(status='cancelled',progress='Browser disconnected',finished_at=now)
+                    kind=data.get('kind','shorts')
+                    if job_id in waiting_jobs[kind]:waiting_jobs[kind].remove(job_id)
+                    expired_queued.append((job_id,data['owner'],data['quota_day'],kind,data.get('is_upload',False)))
+        for job_id,uid,day,kind,is_upload in expired_queued:
+            refund_work(uid,day,kind)
+            finish_user(uid,is_upload)
+            shutil.rmtree(WORK/job_id,ignore_errors=True)
+        cleanup()
 
 def utc_day():
     return datetime.now(timezone.utc).date().isoformat()
@@ -142,13 +225,20 @@ def worker_loop(kind):
         with lock:
             if job_id in waiting_jobs[kind]:
                 waiting_jobs[kind].remove(job_id)
-            if job_id in jobs:
+            skip=jobs.get(job_id,{}).get('status')=='cancelled'
+            if job_id in jobs and not skip:
                 jobs[job_id].update(status='starting', progress='Processing your request')
+        if skip:
+            target_queue.task_done()
+            continue
         try:
             if kind == 'shorts':
                 generate(*args)
             else:
                 run_media_download(*args)
+        except CancelledJob:
+            data=jobs.get(job_id)
+            if data:cancelled_job(job_id,data['owner'],kind,data.get('is_upload',False))
         except Exception as exc:
             traceback.print_exc()
             with lock:
@@ -227,6 +317,7 @@ def captions(words, start, end, path, color='#FFE34D'):
 
 # Separate, measurable stages for the automatic Shorts generator.
 SHORTS_STAGES = ('download', 'transcription', 'selection', 'render')
+SHORTS_COUNT = 8
 
 def set_stage_percentage(job_id, stage, percentage):
     """Never publish a stage as completed before the actual work finishes."""
@@ -258,6 +349,7 @@ def shorts_download_hook(job_id, count):
     streams = {}
     expected_count = count
     def callback(event):
+        check_cancel(job_id)
         if event.get('status') not in ('downloading', 'finished'):
             return
         key = str(event.get('filename') or event.get('tmpfilename') or 'stream')
@@ -273,31 +365,76 @@ def shorts_download_hook(job_id, count):
         set_stage_percentage(job_id, 'download', min(99, int(99 * sum(streams.values()) / expected)))
     return callback
 
-def transcribe(path, on_progress=None, total_duration=None):
+def transcribe(path, on_progress=None, total_duration=None, job_id=None):
+    """Fast, bounded transcription: sample evenly across long videos.
+
+    4 x 75s of mono 16 kHz audio by default; timestamps are translated to
+    original timeline. A reusable tiny Whisper model trades some accuracy for speed.
+    """
+    total=float(total_duration or duration(path))
+    count=4
+    segment=min(TRANSCRIPTION_SAMPLE_SECONDS,max(5,total/count))
+    starts=[max(0,i*max(0,total-segment)/(count-1)) for i in range(count)]
+    starts=sorted(set(round(x,2) for x in starts))
+    model=get_whisper()
+    words=[]
+    for idx,offset in enumerate(starts):
+        if job_id:check_cancel(job_id)
+        audio=WORK/job_id/f'transcribe_{idx}.wav' if job_id else Path(path).with_suffix(f'.transcribe_{idx}.wav')
+        cmd=['ffmpeg','-hide_banner','-loglevel','error','-y','-ss',str(offset),'-i',str(path),'-t',str(segment),'-vn','-ac','1','-ar','16000','-c:a','pcm_s16le',str(audio)]
+        try:
+            if job_id:ffmpeg_with_cancel(cmd,job_id)
+            else:run(cmd)
+            if audio.exists() and audio.stat().st_size>1024:
+                segments,_=model.transcribe(str(audio),word_timestamps=True,vad_filter=True,beam_size=1,best_of=1,condition_on_previous_text=False)
+                for part in segments:
+                    if job_id:check_cancel(job_id)
+                    for w in part.words or []:
+                        if w.start is not None and w.end is not None:
+                            words.append({'word':w.word,'start':offset+w.start,'end':offset+w.end})
+        finally:
+            audio.unlink(missing_ok=True)
+        if on_progress:on_progress(int(100*(idx+1)/len(starts)))
+    return words
+
+def detect_face_center(video, start, length, job_id):
+    """Sample frames throughout a clip and locate the dominant face (optional OpenCV).
+
+    Returns normalized horizontal center. A face-free or missing-OpenCV clip
+    safely falls back to center crop; no remote face recognition is used.
+    """
+    if os.getenv('AUTO_FACE_TRACKING','1') != '1':return None
     try:
-        from faster_whisper import WhisperModel
-        model=WhisperModel('base',device='cpu',compute_type='int8')
-        segments,_=model.transcribe(str(path),word_timestamps=True,vad_filter=True)
-        words=[]
-        last_progress=-1
-        for segment in segments:
-            words.extend({'word':w.word,'start':w.start,'end':w.end}
-                         for w in (segment.words or []) if w.start is not None and w.end is not None)
-            # This is audio-timeline coverage, not a predicted remaining time.
-            if on_progress and total_duration and total_duration>0:
-                new_progress=max(0,min(99,int(100*float(segment.end)/total_duration)))
-                if new_progress>last_progress:
-                    on_progress(new_progress)
-                    last_progress=new_progress
-        return words
-    except ImportError:
-        raise RuntimeError('Install transcription dependency: pip install faster-whisper')
+        import cv2
+        cascade=cv2.CascadeClassifier(cv2.data.haarcascades+'haarcascade_frontalface_default.xml')
+        if cascade.empty():return None
+        cap=cv2.VideoCapture(str(video))
+        if not cap.isOpened():return None
+        centers=[]
+        try:
+            for k in range(9):
+                check_cancel(job_id)
+                cap.set(cv2.CAP_PROP_POS_MSEC,1000*(start+length*(k+0.5)/9))
+                ok,frame=cap.read()
+                if not ok:continue
+                height,width=frame.shape[:2]
+                ratio=min(1,480/max(1,width)); small=cv2.resize(frame,(max(1,int(width*ratio)),max(1,int(height*ratio))))
+                gray=cv2.cvtColor(small,cv2.COLOR_BGR2GRAY)
+                faces=cascade.detectMultiScale(gray,scaleFactor=1.12,minNeighbors=5,minSize=(24,24))
+                if len(faces):
+                    x,y,w,h=max(faces,key=lambda f:f[2]*f[3]);centers.append((x+w/2)/small.shape[1])
+        finally:cap.release()
+        if not centers:return None
+        centers.sort();return max(0.05,min(0.95,centers[len(centers)//2]))
+    except CancelledJob:raise
+    except Exception:return None
 
 def generate(job,source,seconds,uid,is_upload=False):
     folder=WORK/job;folder.mkdir(exist_ok=True)
     try:
+        check_cancel(job)
         jobs[job].update(status='downloading',stage='download',progress='Downloading source video',
-                         percentages=[0,0,0,0],stage_percentages={name:0 for name in SHORTS_STAGES})
+                         percentages=[0]*SHORTS_COUNT,stage_percentages={name:0 for name in SHORTS_STAGES})
         if source.startswith('https://'):
             host=(urlparse(source).hostname or '').lower()
             if host not in {'youtube.com','www.youtube.com','m.youtube.com','youtu.be'}:
@@ -320,6 +457,7 @@ def generate(job,source,seconds,uid,is_upload=False):
             video=max(candidates,key=lambda f:f.stat().st_size)
         else:
             video=Path(source)
+        check_cancel(job)
         total=duration(video)
         if total<12:raise RuntimeError('Video must be at least 12 seconds')
         if total>MAX_VIDEO_SECONDS:raise RuntimeError('Video longer than 5 hours is not supported')
@@ -329,60 +467,67 @@ def generate(job,source,seconds,uid,is_upload=False):
                          progress='Transcribing speech (speech model may download on first run)')
         words=transcribe(video,
                          on_progress=lambda pct:set_stage_percentage(job,'transcription',pct),
-                         total_duration=total)
+                         total_duration=total,job_id=job)
         set_stage_percentage(job,'transcription',100)
 
-        jobs[job].update(status='selecting',stage='selection',progress='Selecting the four best speech-rich windows')
-        clip_len=min(seconds,max(3,total/4-0.5))
+        jobs[job].update(status='selecting',stage='selection',progress='Selecting eight speech-rich windows')
+        clip_len=min(seconds,max(3,total/SHORTS_COUNT-0.5))
         starts=[i*max(1,(total-clip_len)/24) for i in range(25)]
         ranked=sorted(starts,key=lambda s:sum(1 for w in words if s<=w['start']<s+clip_len),reverse=True)
         chosen=[]
         for index,s in enumerate(ranked):
             if all(abs(s-other)>=clip_len for other in chosen):chosen.append(s)
             set_stage_percentage(job,'selection',min(99,int(100*(index+1)/len(ranked))))
-            if len(chosen)==4:break
-        if len(chosen)<4:
-            chosen=[i*(total-clip_len)/3 for i in range(4)]
+            if len(chosen)==SHORTS_COUNT:break
+        if len(chosen)<SHORTS_COUNT:
+            chosen=[i*(total-clip_len)/(SHORTS_COUNT-1) for i in range(SHORTS_COUNT)]
         chosen.sort()
         set_stage_percentage(job,'selection',100)
 
         outputs=[]
         for i,start in enumerate(chosen,1):
-            jobs[job].update(status='rendering',stage='render',progress=f'Rendering clip {i}/4')
+            check_cancel(job)
+            jobs[job].update(status='rendering',stage='render',progress=f'Rendering clip {i}/{SHORTS_COUNT}')
             subtitle=folder/f'clip{i}.ass';captions(words,start,start+clip_len,subtitle)
             output=folder/f'clip{i}.mp4'
-            vf=f'scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,ass=clip{i}.ass'
+            face_center=detect_face_center(video,start,clip_len,job)
+            # The crop follows the dominant face position estimated over nine samples.
+            # FFmpeg clamps the crop if the subject is close to the edge.
+            crop_x='(in_w-out_w)/2' if face_center is None else f'max(0,min(in_w-out_w,in_w*{face_center:.5f}-out_w/2))'
+            vf=f'scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280:{crop_x}:0,ass=clip{i}.ass'
             cmd=['ffmpeg','-hide_banner','-loglevel','error','-nostats',
                  '-progress','pipe:1','-y','-ss',str(start),'-i',str(video),'-t',str(clip_len),
                  '-vf',vf,'-r','25','-c:v','libx264','-preset','veryfast','-crf','25',
                  '-c:a','aac','-b:a','128k',str(output)]
-            with subprocess.Popen(cmd,cwd=str(folder),stdout=subprocess.PIPE,
-                                  stderr=subprocess.PIPE,text=True,encoding='utf-8',errors='replace') as proc:
-                for line in proc.stdout:
-                    key,sep,value=line.strip().partition('=')
-                    if sep and key in ('out_time_us','out_time_ms','out_time'):
-                        try:
-                            if key=='out_time':
-                                hh,mm,ss=value.split(':');elapsed=int(hh)*3600+int(mm)*60+float(ss)
-                            else:elapsed=int(value)/1000000
-                            pct=max(0,min(99,int(100*elapsed/clip_len)))
-                            set_clip_percentage(job,i-1,pct)
-                        except (ValueError,ZeroDivisionError):pass
-                err=proc.stderr.read()
-                if proc.wait()!=0:raise RuntimeError(err[-1300:] or 'FFmpeg rendering failed')
+            def on_render_line(line):
+                key,sep,value=line.strip().partition('=')
+                if sep and key in ('out_time_us','out_time_ms','out_time'):
+                    try:
+                        if key=='out_time':
+                            hh,mm,ss=value.split(':');elapsed=int(hh)*3600+int(mm)*60+float(ss)
+                        else:elapsed=int(value)/1000000
+                        set_clip_percentage(job,i-1,max(0,min(99,int(100*elapsed/clip_len))))
+                    except (ValueError,ZeroDivisionError):pass
+            ffmpeg_with_cancel(cmd,job,cwd=str(folder),on_line=on_render_line)
             if not output.is_file() or output.stat().st_size==0:
                 raise RuntimeError(f'Short {i} did not produce an MP4 file')
             set_clip_percentage(job,i-1,100)
             outputs.append({'url':f'/files/{job}/clip{i}.mp4',
-                            'start':round(start,1),'duration':round(clip_len,1)})
+                            'start':round(start,1),'duration':round(clip_len,1), 'face_tracking':face_center is not None, 'speech_score':round(min(100,100*sum(1 for w in words if start<=w['start']<start+clip_len)/max(1,clip_len*2)),1)})
         set_stage_percentage(job,'render',100)
         jobs[job].update(status='done',progress='Finished',clips=outputs,finished_at=time.time())
+    except CancelledJob:
+        cancelled_job(job,uid,'shorts',is_upload)
+        return
     except Exception as e:
+        if jobs.get(job,{}).get('cancel_requested'):
+            cancelled_job(job,uid,'shorts',is_upload)
+            return
         traceback.print_exc()
         jobs[job].update(status='error',progress=str(e)[:500],finished_at=time.time())
         refund_work(uid, jobs[job]['quota_day'], 'shorts')
     finally:
-        finish_user(uid, is_upload)
+        if jobs.get(job,{}).get('status')!='cancelled':finish_user(uid, is_upload)
 
 @app.get('/health')
 def health():
@@ -437,8 +582,8 @@ async def start(url:str=Form(''),file:UploadFile|None=File(None),seconds:int=For
         finish_user(uid, is_upload=bool(file))
         shutil.rmtree(folder,ignore_errors=True)
         raise
-    jobs[job]={'owner':uid,'created':time.time(),'quota_day':reserved_day,'status':'queued','progress':'Waiting',
-               'is_upload':bool(file),'clips':[],'percentages':[0,0,0,0],
+    jobs[job]={'owner':uid,'created':time.time(),'quota_day':reserved_day,'status':'queued','progress':'Waiting','last_seen':time.time(),
+               'is_upload':bool(file),'clips':[],'percentages':[0]*SHORTS_COUNT,
                'stage':'queued','stage_percentages':{name:0 for name in SHORTS_STAGES}}
     enqueue_job(job,'shorts',(job,source,seconds,uid,bool(file)))
     return {'job_id':job}
@@ -450,8 +595,10 @@ def status(job:str,uid:str=Depends(current_user)):
         data=jobs.get(job)
         if not data or data['owner']!=uid:
             raise HTTPException(404,'Job not found')
+        if data['status'] not in ('done','error','cancelled'):
+            data['last_seen']=time.time()
         view={key:value for key,value in data.items() if key not in
-              ('owner','created','quota_day','is_upload','finished_at','download_file','download_token','token_expiry')}
+              ('owner','created','quota_day','is_upload','finished_at','download_file','download_token','token_expiry','last_seen','cancel_requested')}
         # Return snapshots so the browser never sees half-updated percentages.
         if 'stage_percentages' in view:
             view['stage_percentages']=dict(view['stage_percentages'])
@@ -464,12 +611,47 @@ def status(job:str,uid:str=Depends(current_user)):
                         progress=f'Waiting in queue: position {position}')
     return view
 
+@app.post('/jobs/{job}/cancel')
+def cancel_job(job:str,uid:str=Depends(current_user)):
+    with lock:
+        data=jobs.get(job)
+        if not data or data['owner']!=uid:raise HTTPException(404,'Job not found')
+        if data['status'] in ('done','error','cancelled'):
+            return {'status':data['status']}
+        data['cancel_requested']=True
+        queued=data['status']=='queued'
+        if queued:
+            kind=data.get('kind','shorts')
+            if job in waiting_jobs[kind]:waiting_jobs[kind].remove(job)
+            data.update(status='cancelled',progress='Cancelled before processing',finished_at=time.time())
+    if queued:
+        refund_work(uid,data['quota_day'],kind)
+        finish_user(uid,data.get('is_upload',False))
+        shutil.rmtree(WORK/job,ignore_errors=True)
+    return {'status':'cancelled' if queued else 'cancelling'}
+
+@app.get('/files/{job}/all.zip')
+def download_all_shorts(job:str,uid:str=Depends(current_user)):
+    cleanup()
+    data=jobs.get(job)
+    if not data or data.get('owner')!=uid or data.get('status')!='done':
+        raise HTTPException(404,'Job not ready')
+    folder=WORK/job
+    paths=[folder/f'clip{i}.mp4' for i in range(1,SHORTS_COUNT+1)]
+    if not all(path.is_file() for path in paths):
+        raise HTTPException(404,'Shorts not available')
+    archive=folder/'clipstudio-shorts.zip'
+    if not archive.is_file():
+        with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_STORED) as z:
+            for path in paths:z.write(path,arcname=path.name)
+    return FileResponse(archive,media_type='application/zip',filename='clipstudio-shorts.zip')
+
 @app.get('/files/{job}/{filename}')
 def download(job:str,filename:str,uid:str=Depends(current_user)):
     cleanup()
     data=jobs.get(job)
     if not data or data['owner']!=uid:raise HTTPException(404,'File not found')
-    if not re.fullmatch(r'clip[1-4]\.mp4',filename):raise HTTPException(404,'File not found')
+    if not re.fullmatch(r'clip[1-8]\.mp4',filename):raise HTTPException(404,'File not found')
     path=WORK/job/filename
     if data['status']!='done' or not path.is_file():raise HTTPException(404,'File not ready')
     return FileResponse(path,media_type='video/mp4',filename=filename)
@@ -540,6 +722,73 @@ def media_information(url):
         raise ValueError('Choose a direct link to one video, not a playlist or gallery')
     return info
 
+
+@app.post('/media/playlist')
+def playlist_preview(url:str=Form(...),uid:str=Depends(current_user)):
+    link,platform=validate_media_link(url)
+    if platform!='youtube':raise HTTPException(400,'YouTube playlists only')
+    try:
+        with YoutubeDL({'extract_flat':'in_playlist','skip_download':True,'quiet':True,'playlistend':30,'socket_timeout':15,'ignoreerrors':True}) as ydl:
+            info=ydl.extract_info(link,download=False)
+    except Exception as exc:raise HTTPException(422,'Playlist unavailable') from exc
+    if not isinstance(info,dict) or info.get('_type')!='playlist':raise HTTPException(400,'Provide a playlist URL')
+    entries=[]
+    for item in info.get('entries') or []:
+        if not isinstance(item,dict):continue
+        video_id=str(item.get('id') or '')
+        if not re.fullmatch(r'[A-Za-z0-9_-]{11}',video_id):continue
+        entries.append({'id':video_id,'title':str(item.get('title') or 'Video')[:180],'url':'https://www.youtube.com/watch?v='+video_id})
+    return {'title':str(info.get('title') or 'Playlist')[:180],'entries':entries[:30]}
+
+def admin_user(uid:str=Depends(current_user)):
+    allowed={x.strip() for x in os.getenv('ADMIN_USER_IDS','').split(',') if x.strip()}
+    if not allowed or uid not in allowed:raise HTTPException(403,'Admin access denied')
+    return uid
+
+@app.get('/admin/overview')
+def admin_overview(uid:str=Depends(admin_user)):
+    with lock:
+        counts={status:sum(1 for job in jobs.values() if job.get('status')==status)
+                for status in ('queued','downloading','transcribing','selecting','rendering','done','cancelled','error')}
+        return {'jobs':counts,'active_users':len(active_users),
+                'waiting_shorts':len(waiting_jobs['shorts']),
+                'waiting_downloads':len(waiting_jobs['downloads']),
+                'shorts_workers':MAX_CONCURRENT_SHORTS,
+                'downloads_workers':MAX_CONCURRENT_DOWNLOADS}
+
+@app.post('/admin/jobs/{job}/cancel')
+def admin_cancel_job(job:str,uid:str=Depends(admin_user)):
+    with lock:
+        item=jobs.get(job)
+        if not item:raise HTTPException(404,'Job not found')
+        if item.get('status') in ('done','cancelled','error'):return {'status':item['status']}
+        item['cancel_requested']=True
+    return {'status':'cancelling'}
+
+@app.post('/media/playlist/download')
+def playlist_batch(url:str=Form(...),quality:int=Form(720),
+                   rights_confirmed:bool=Form(False),uid:str=Depends(current_user)):
+    if not rights_confirmed:raise HTTPException(400,'Confirm rights to every video in the playlist')
+    if quality not in VIDEO_QUALITIES:raise HTTPException(400,'Unsupported quality')
+    info=playlist_preview(url,uid)
+    if not info['entries']:raise HTTPException(422,'No downloadable entries found')
+    accepted=[];failures=[]
+    for item in info['entries'][:5]:
+        try:
+            result=media_download(url=item['url'],format='mp4',quality=quality,
+                                  rights_confirmed=True,uid=uid)
+            accepted.append({'title':item['title'],'job_id':result['job_id']})
+        except HTTPException as exc:
+            failures.append({'title':item['title'],'reason':str(exc.detail)})
+            break
+    return {'accepted':accepted,'failures':failures,'maximum_per_batch':5}
+
+@app.get('/my/jobs')
+def my_jobs(uid:str=Depends(current_user)):
+    with lock:
+        own=[{'id':key,'kind':v.get('kind','shorts'),'status':v.get('status'),'created':v.get('created'),'progress':v.get('progress')} for key,v in jobs.items() if v.get('owner')==uid]
+    return {'jobs':sorted(own,key=lambda x:x['created'] or 0,reverse=True)[:50]}
+
 @app.post('/media/info')
 def media_info(url:str=Form(...),uid:str=Depends(current_user)):
     link,platform=validate_media_link(url)
@@ -568,7 +817,7 @@ def inspect_media_streams(path):
     audio=next((stream for stream in streams if stream.get('codec_type')=='audio'),None)
     return info,video,audio
 
-def normalize_download_mp4(source: Path, output: Path, quality: int, on_progress):
+def normalize_download_mp4(source: Path, output: Path, quality: int, on_progress, job_id):
     """Produce a real H.264/AAC MP4, not just rename/remux an incompatible codec.
 
     A previous yt-dlp configuration could return audio-only files or MP4 with
@@ -601,45 +850,33 @@ def normalize_download_mp4(source: Path, output: Path, quality: int, on_progress
     if audio is not None:
         cmd+=['-c:a','aac','-b:a','192k'] if needs_audio_encoding else ['-c:a','copy']
     cmd+=['-movflags','+faststart','-f','mp4',str(output)]
-    logfile=output.with_suffix('.ffmpeg.log')
-    try:
-        with logfile.open('w',encoding='utf-8') as errors:
-            with subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=errors,
-                                  text=True,encoding='utf-8',errors='replace') as proc:
-                total=float((info.get('format') or {}).get('duration') or 0)
-                for line in proc.stdout:
-                    key,sep,value=line.strip().partition('=')
-                    if not sep or key not in ('out_time_us','out_time_ms','out_time'):
-                        continue
-                    try:
-                        if key=='out_time':
-                            hh,mm,ss=value.split(':')
-                            elapsed=int(hh)*3600+int(mm)*60+float(ss)
-                        else:
-                            elapsed=int(value)/1_000_000
-                        if total>0:
-                            on_progress(min(98,70+int(28*elapsed/total)))
-                    except (ValueError,ZeroDivisionError):
-                        continue
-                rc=proc.wait()
-        if rc:
-            raise RuntimeError('MP4 conversion failed: '+logfile.read_text(encoding='utf-8',errors='replace')[-1400:])
-        if not output.exists() or not output.stat().st_size:
-            raise RuntimeError('MP4 conversion produced no file')
-        _,final_video,final_audio=inspect_media_streams(output)
-        if final_video is None or final_video.get('codec_name')!='h264':
-            raise RuntimeError('MP4 video track is missing or not H.264')
-        if audio is not None and (final_audio is None or final_audio.get('codec_name')!='aac'):
-            raise RuntimeError('MP4 audio track is missing or not AAC')
-    finally:
-        logfile.unlink(missing_ok=True)
+    total=float((info.get('format') or {}).get('duration') or 0)
+    def on_encode_line(line):
+        key,sep,value=line.strip().partition('=')
+        if not sep or key not in ('out_time_us','out_time_ms','out_time'):return
+        try:
+            if key=='out_time':
+                hh,mm,ss=value.split(':');elapsed=int(hh)*3600+int(mm)*60+float(ss)
+            else:elapsed=int(value)/1_000_000
+            if total>0:on_progress(min(98,70+int(28*elapsed/total)))
+        except (ValueError,ZeroDivisionError):pass
+    ffmpeg_with_cancel(cmd,job_id,on_line=on_encode_line)
+    if not output.exists() or not output.stat().st_size:
+        raise RuntimeError('MP4 conversion produced no file')
+    _,final_video,final_audio=inspect_media_streams(output)
+    if final_video is None or final_video.get('codec_name')!='h264':
+        raise RuntimeError('MP4 video track is missing or not H.264')
+    if audio is not None and (final_audio is None or final_audio.get('codec_name')!='aac'):
+        raise RuntimeError('MP4 audio track is missing or not AAC')
 
 def run_media_download(job,url,media_format,quality,uid):
     folder=WORK/job
     try:
+        check_cancel(job)
         _,platform=validate_media_link(url)
         jobs[job].update(status='downloading',progress=f'Connecting to {platform.title()}',percent=0)
         def hook(update):
+            check_cancel(job)
             if update.get('status')=='downloading':
                 total=update.get('total_bytes') or update.get('total_bytes_estimate')
                 so_far=update.get('downloaded_bytes',0)
@@ -652,15 +889,17 @@ def run_media_download(job,url,media_format,quality,uid):
         opts={'outtmpl':str(folder/'source.%(ext)s'),'quiet':True,'noplaylist':True,
               'restrictfilenames':True,'socket_timeout':30,'max_filesize':MAX_VIDEO_FILE_BYTES,
               'progress_hooks':[hook],'overwrites':True}
-        if media_format=='mp3':
+        if media_format in ('mp3','wav'):
             opts['format']='bestaudio/best'
-            opts['postprocessors']=[{'key':'FFmpegExtractAudio','preferredcodec':'mp3',
+            opts['postprocessors']=[{'key':'FFmpegExtractAudio','preferredcodec':media_format,
                                       'preferredquality':'192'}]
         else:
             # Do not use bv* here: only video formats are eligible for MP4.
             # Some social sites have one combined MP4 stream, others separate audio/video.
-            opts['format']=(f'bv[height<={quality}]+ba/b[height<={quality}]/'
-                            f'bv+ba/b')
+            opts['format']=(f'bv[vcodec^=avc1][height<={quality}]+ba[acodec^=mp4a]/'
+                            f'b[ext=mp4][height<={quality}]/'
+                            f'bv[height<={quality}]+ba/b[height<={quality}]/'
+                            f'bv[height<={quality}]+ba/b[height<={quality}]')
             # MKV safely holds a temporary combination of VP9/AV1/Opus/etc.
             # The final downloaded MP4 is always checked and normalized below.
             opts['merge_output_format']='mkv'
@@ -674,10 +913,11 @@ def run_media_download(job,url,media_format,quality,uid):
             if info.get('_type') in ('playlist','multi_video'):
                 raise RuntimeError('Provide one video link, not a playlist or gallery')
             ydl.download([url])
-        if media_format=='mp3':
-            outputs=[p for p in folder.glob('source.mp3') if p.is_file()]
+        check_cancel(job)
+        if media_format in ('mp3','wav'):
+            outputs=[p for p in folder.glob('source.'+media_format) if p.is_file()]
             if not outputs:
-                raise RuntimeError('Could not extract MP3 from this link')
+                raise RuntimeError('Could not extract audio from this link')
             output=outputs[0]
         else:
             source_candidates=[p for p in folder.glob('source.*')
@@ -689,24 +929,30 @@ def run_media_download(job,url,media_format,quality,uid):
             output=folder/'download.mp4'
             jobs[job].update(status='processing',progress='Encoding compatible MP4 video (H.264 + AAC)',percent=70)
             normalize_download_mp4(source,output,quality,
-                                   lambda pct: jobs[job].update(percent=max(jobs[job]['percent'],pct)))
+                                   lambda pct: jobs[job].update(percent=max(jobs[job]['percent'],pct)),job)
             source.unlink(missing_ok=True)
         if output.stat().st_size>MAX_VIDEO_FILE_BYTES:
             raise RuntimeError('File larger than 5 GiB. Choose a lower quality.')
         token=secrets.token_urlsafe(24)
-        ext='mp3' if media_format=='mp3' else 'mp4'
-        name=f'clipstudio-{platform}-{(str(quality)+"p-") if ext=="mp4" else ""}video.{ext}' if ext=='mp4' else f'clipstudio-{platform}-audio.mp3'
+        ext=media_format if media_format in ('mp3','wav') else 'mp4'
+        name=f'clipstudio-{platform}-{(str(quality)+"p-") if ext=="mp4" else ""}video.{ext}' if ext=='mp4' else f'clipstudio-{platform}-audio.{ext}'
         jobs[job].update(status='done',progress='Ready to download',percent=100,
                          download_file=output.name,download_token=token,
                          token_expiry=time.time()+1800,finished_at=time.time(),
                          platform=platform,url=f'/media/file/{job}/{token}',filename=name,
                          size_bytes=output.stat().st_size)
+    except CancelledJob:
+        cancelled_job(job,uid,'downloads')
+        return
     except Exception as e:
+        if jobs.get(job,{}).get('cancel_requested'):
+            cancelled_job(job,uid,'downloads')
+            return
         traceback.print_exc()
         refund_work(uid,jobs[job]['quota_day'],'downloads')
         jobs[job].update(status='error',progress=str(e)[:400],finished_at=time.time())
     finally:
-        finish_user(uid)
+        if jobs.get(job,{}).get('status')!='cancelled':finish_user(uid)
 
 @app.post('/media/download')
 def media_download(url:str=Form(...),format:str=Form('mp4'),quality:int=Form(720),
@@ -714,8 +960,8 @@ def media_download(url:str=Form(...),format:str=Form('mp4'),quality:int=Form(720
     if not rights_confirmed:
         raise HTTPException(400,'Confirm you own or have permission to download this video')
     link,platform=validate_media_link(url)
-    if format not in {'mp3','mp4'}:
-        raise HTTPException(400,'Choose MP3 or MP4')
+    if format not in {'mp3','wav','mp4'}:
+        raise HTTPException(400,'Choose MP3, WAV or MP4')
     if quality not in VIDEO_QUALITIES:
         raise HTTPException(400,'Unsupported quality')
     if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
@@ -726,7 +972,7 @@ def media_download(url:str=Form(...),format:str=Form('mp4'),quality:int=Form(720
     try:
         (WORK/job).mkdir(exist_ok=True)
         jobs[job]={'owner':uid,'created':time.time(),'quota_day':day,'platform':platform,
-                   'status':'queued','progress':'Waiting','percent':0}
+                   'status':'queued','progress':'Waiting','percent':0,'last_seen':time.time()}
         enqueue_job(job,'downloads',(job,link,format,quality,uid))
         return {'job_id':job}
     except Exception:
@@ -747,4 +993,4 @@ def media_file(job:str,token:str):
     path=WORK/job/data['download_file']
     if not path.is_file():
         raise HTTPException(404,'File not found')
-    return FileResponse(path,media_type='audio/mpeg' if path.suffix=='.mp3' else 'video/mp4',filename=data['filename'])
+    return FileResponse(path,media_type=('audio/mpeg' if path.suffix=='.mp3' else 'audio/wav' if path.suffix=='.wav' else 'video/mp4'),filename=data['filename'])
