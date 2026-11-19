@@ -20,7 +20,7 @@ Voir `INSTALLER_V6_AR_FR.md` pour l'installation et les limites de la version pu
 
 > **NEW:** See `MISE_A_JOUR_FR_AR.md` for the YouTube downloader, MP3/MP4 selection, mobile logout, daily quotas, and update instructions.
 
-# ClipStudio Free V3
+# ClipStudio Free V2
 
 A responsive public website with English (default), French, Arabic (RTL) and Spanish, automatic light/dark theme, Supabase authentication, per-user projects, history and preferences, and **local browser-based vertical MP4 trimming**.
 

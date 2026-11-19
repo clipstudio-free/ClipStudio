@@ -144,3 +144,19 @@ video,img,canvas{max-width:100%}input,select,textarea{max-width:100%;min-width:0
 .v15-timeline-actions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
 .v15-cross-nav{margin-bottom:18px}
 @media(max-width:640px){.v15-timeline{padding:10px}.v15-timeline-actions .btn{flex:1 1 135px}.v15-generator-page{padding:12px}}
+
+/* V16: accessible hamburger on desktop and two-column mobile navigation */
+.menu-toggle{display:inline-flex!important;align-items:center;justify-content:center}
+@media(min-width:1001px){.sidebar{position:fixed;top:0;bottom:0;left:0;z-index:1200;width:min(340px,90vw);transform:translateX(-105%);transition:transform .2s;overflow-y:auto;box-shadow:0 15px 50px #0006}.sidebar.menu-open{transform:translateX(0)}.menu-close{display:inline-flex!important;align-items:center;justify-content:center}.menu-backdrop.show{display:block;position:fixed;inset:0;background:#0008;z-index:1199;border:0}.app-layout{display:block!important}.app-main{width:100%;max-width:100%;margin:auto;padding:24px clamp(18px,4vw,55px) 60px}}
+@media(max-width:1000px){.sidebar{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));align-content:start;align-items:stretch;gap:8px;padding:16px!important}.sidebar-logo{display:flex!important;grid-column:1/-1;margin:0 0 12px!important;justify-content:space-between;align-items:center}.nav-label{display:block!important;grid-column:1/-1}.sidebar-bottom{grid-column:1/-1;display:block!important}.side-link{white-space:normal!important;min-height:62px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:6px;font-size:12px!important;padding:10px 6px!important}.sidebar-bottom .side-link{flex-direction:row}.sidebar .logo{font-size:20px}}
+.v16-generated-notice{background:var(--panel);border:1px solid var(--pink);border-radius:14px;padding:15px;margin:15px 0}
+.v16-generated-notice[hidden]{display:none}
+#caption-overlay{pointer-events:none}
+
+/* V17: source download + correctly sized editor preview */
+.v17-source-download{border:1px solid var(--line,#555);border-radius:12px;padding:16px;margin:14px 0;background:rgba(128,128,128,.06)}
+.v17-source-download p{font-size:13px;opacity:.8}.v17-source-download progress{width:100%}
+#preview-frame.v17-original-preview{max-width:100%;max-height:65vh;min-height:0;display:grid;place-items:center;margin:15px auto}
+#preview-frame.v17-original-preview video{width:100%;height:100%;max-height:65vh;object-fit:contain}
+.v15-generator-page .v13-captions{margin:18px 0}.v15-generator-page #auto-generate{width:100%;padding:16px}
+@media(max-width:600px){#preview-frame.v17-original-preview{max-height:55vh}#preview-frame.v17-original-preview video{max-height:55vh}}

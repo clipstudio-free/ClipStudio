@@ -302,10 +302,12 @@ def duration(path):
 def ass_time(sec):
     cs=round(sec*100);return f'{cs//360000}:{(cs//6000)%60:02}:{(cs//100)%60:02}.{cs%100:02}'
 
-def captions(words, start, end, path, color='#FFE34D'):
+def captions(words, start, end, path, color='#FFE34D', size=40, font='Arial', position='bottom', style='clean', animation='pop'):
     # ASS BGR hexadecimal; highlighted word on each spoken interval
     bgr='&H00'+color[5:7]+color[3:5]+color[1:3]
-    header='''[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\nWrapStyle: 2\n[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\nStyle: Pop,Arial,40,'''+bgr+''',&H00FFFFFF,&H00101010,&H00000000,-1,0,0,0,100,100,0,0,1,3,1,2,30,30,150,1\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n'''
+    alignment={'bottom':2,'center':5,'top':8}.get(position,2)
+    border=3 if style=='boxed' else 1
+    header='''[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\nWrapStyle: 2\n[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\nStyle: Pop,'''+font+''','''+str(size)+''','''+bgr+''',&H00FFFFFF,&H00101010,&H00000000,-1,0,0,0,100,100,0,0,1,'''+str(border)+''',1,'''+str(alignment)+''',30,30,150,1\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n'''
     events=[]
     for w in words:
         a=max(start,float(w['start']));b=min(end,float(w['end']))
@@ -313,7 +315,7 @@ def captions(words, start, end, path, color='#FFE34D'):
         txt=re.sub(r'[{}\\]','',str(w['word'])).strip()
         if not txt:continue
         # pop entrance: ASS scale animation for each word
-        events.append(f'Dialogue: 0,{ass_time(a-start)},{ass_time(b-start)},Pop,,0,0,0,,{{\\fscx120\\fscy120\\t(0,140,\\fscx100\\fscy100)}}{txt}')
+        events.append(f'Dialogue: 0,{ass_time(a-start)},{ass_time(b-start)},Pop,,0,0,0,,{txt}')
     path.write_text(header+'\n'.join(events),encoding='utf-8-sig')
 
 # Separate, measurable stages for the automatic Shorts generator.
@@ -430,7 +432,7 @@ def detect_face_center(video, start, length, job_id):
     except CancelledJob:raise
     except Exception:return None
 
-def generate(job,source,seconds,uid,is_upload=False):
+def generate(job,source,seconds,uid,is_upload=False,caption_config=None):
     folder=WORK/job;folder.mkdir(exist_ok=True)
     try:
         check_cancel(job)
@@ -489,7 +491,7 @@ def generate(job,source,seconds,uid,is_upload=False):
         for i,start in enumerate(chosen,1):
             check_cancel(job)
             jobs[job].update(status='rendering',stage='render',progress=f'Rendering clip {i}/{SHORTS_COUNT}')
-            subtitle=folder/f'clip{i}.ass';captions(words,start,start+clip_len,subtitle)
+            subtitle=folder/f'clip{i}.ass';captions(words,start,start+clip_len,subtitle,**(caption_config or {}))
             output=folder/f'clip{i}.mp4'
             face_center=detect_face_center(video,start,clip_len,job)
             # The crop follows the dominant face position estimated over nine samples.
@@ -512,8 +514,17 @@ def generate(job,source,seconds,uid,is_upload=False):
             ffmpeg_with_cancel(cmd,job,cwd=str(folder),on_line=on_render_line)
             if not output.is_file() or output.stat().st_size==0:
                 raise RuntimeError(f'Short {i} did not produce an MP4 file')
+            # Keep an uncaptioned version for later text editing; the standard clip remains captioned.
+            clean=folder/f'clip{i}.clean.mp4'
+            clean_cmd=['ffmpeg','-hide_banner','-loglevel','error','-y','-ss',str(start),'-i',str(video),'-t',str(clip_len),
+                       '-vf',f'scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280:{crop_x}:0',
+                       '-r','25','-c:v','libx264','-preset','veryfast','-crf','25','-c:a','aac','-b:a','128k',str(clean)]
+            ffmpeg_with_cancel(clean_cmd,job,cwd=str(folder))
+            cue_data=[{'start':round(max(0,float(w['start'])-start),2),'end':round(min(clip_len,float(w['end'])-start),2),
+                       'text':str(w['word']).strip()[:200]} for w in words if start<=float(w['start'])<start+clip_len and float(w['end'])>float(w['start'])]
+            cue_data=[c for c in cue_data if c['end']>c['start']]
             set_clip_percentage(job,i-1,100)
-            outputs.append({'url':f'/files/{job}/clip{i}.mp4',
+            outputs.append({'cues':cue_data,'clean_url':f'/files/{job}/clip{i}.clean.mp4','url':f'/files/{job}/clip{i}.mp4',
                             'start':round(start,1),'duration':round(clip_len,1), 'face_tracking':face_center is not None, 'speech_score':round(min(100,100*sum(1 for w in words if start<=w['start']<start+clip_len)/max(1,clip_len*2)),1)})
         set_stage_percentage(job,'render',100)
         jobs[job].update(status='done',progress='Finished',clips=outputs,finished_at=time.time())
@@ -556,10 +567,12 @@ def validate_youtube_link(raw: str) -> str:
     return value
 
 @app.post('/generate')
-async def start(url:str=Form(''),file:UploadFile|None=File(None),seconds:int=Form(30),uid:str=Depends(current_user)):
+async def start(url:str=Form(''),file:UploadFile|None=File(None),seconds:int=Form(30),caption_font:str=Form('Arial'),caption_size:int=Form(40),caption_color:str=Form('#FFE34D'),caption_position:str=Form('bottom'),caption_style:str=Form('clean'),caption_animation:str=Form('pop'),uid:str=Depends(current_user)):
     if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):raise HTTPException(400,'FFmpeg/ffprobe not found in PATH')
     if not file and not url:raise HTTPException(400,'Provide YouTube URL or local file')
     if seconds not in (15,30,45,60):raise HTTPException(400,'Invalid clip duration')
+    if caption_font not in {'Arial Black','Arial','Impact','Georgia'} or not 18<=caption_size<=400 or not re.fullmatch(r'#[0-9a-fA-F]{6}',caption_color) or caption_position not in {'top','center','bottom'} or caption_style not in {'clean','boxed'} or caption_animation not in {'none','pop'}:raise HTTPException(400,'Invalid caption settings')
+    caption_config={'font':caption_font,'size':caption_size,'color':caption_color,'position':caption_position,'style':caption_style,'animation':caption_animation}
     source_url = validate_youtube_link(url) if not file else ''
     cleanup()
     reserved_day=reserve_work(uid,'shorts',is_upload=bool(file))
@@ -586,7 +599,7 @@ async def start(url:str=Form(''),file:UploadFile|None=File(None),seconds:int=For
     jobs[job]={'owner':uid,'created':time.time(),'quota_day':reserved_day,'status':'queued','progress':'Waiting','last_seen':time.time(),
                'is_upload':bool(file),'clips':[],'percentages':[0]*SHORTS_COUNT,
                'stage':'queued','stage_percentages':{name:0 for name in SHORTS_STAGES}}
-    enqueue_job(job,'shorts',(job,source,seconds,uid,bool(file)))
+    enqueue_job(job,'shorts',(job,source,seconds,uid,bool(file),caption_config))
     return {'job_id':job}
 
 @app.get('/jobs/{job}')
@@ -652,7 +665,7 @@ def download(job:str,filename:str,uid:str=Depends(current_user)):
     cleanup()
     data=jobs.get(job)
     if not data or data['owner']!=uid:raise HTTPException(404,'File not found')
-    if not re.fullmatch(r'clip[1-8]\.mp4',filename):raise HTTPException(404,'File not found')
+    if not re.fullmatch(r'clip[1-8](?:\.clean)?\.mp4',filename):raise HTTPException(404,'File not found')
     path=WORK/job/filename
     if data['status']!='done' or not path.is_file():raise HTTPException(404,'File not ready')
     return FileResponse(path,media_type='video/mp4',filename=filename)
