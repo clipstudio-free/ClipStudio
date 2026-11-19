@@ -160,3 +160,24 @@ video,img,canvas{max-width:100%}input,select,textarea{max-width:100%;min-width:0
 #preview-frame.v17-original-preview video{width:100%;height:100%;max-height:65vh;object-fit:contain}
 .v15-generator-page .v13-captions{margin:18px 0}.v15-generator-page #auto-generate{width:100%;padding:16px}
 @media(max-width:600px){#preview-frame.v17-original-preview{max-height:55vh}#preview-frame.v17-original-preview video{max-height:55vh}}
+
+/* V18 new-project flow and responsive editor workspace */
+.v18-project-home{min-height:65vh;display:grid;align-content:center;gap:24px;padding:24px}
+.v18-home-hero{max-width:720px;margin:auto;text-align:center;display:grid;justify-items:center;gap:18px}
+.v18-home-hero h1{font-size:clamp(28px,5vw,52px);line-height:1.1;margin:0}
+.v18-new-project{font-size:18px!important;padding:16px 28px!important;min-height:56px}
+.v18-hint{opacity:.7;font-size:13px}
+.v18-home-steps{display:flex;flex-wrap:wrap;justify-content:center;gap:10px}
+.v18-home-steps span{border:1px solid #7775;border-radius:20px;padding:10px 14px}
+.v18-studio-top{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin:0 0 16px;padding:12px;border-radius:12px;background:rgba(120,120,120,.1)}
+.v18-studio-top span{flex:1;font-size:12px;opacity:.8}
+.v18-workspace{align-items:start}
+.v18-preview-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:8px 0}
+.v18-preview-toolbar label{display:flex;align-items:center;gap:6px}
+.v18-preview-toolbar input{width:110px}
+.v18-preview-toolbar button.active{border-color:#eac75b;background:#eac75b33}
+.v18-move-enabled video{touch-action:none;cursor:grab}
+.v18-timeline-ruler{height:35px;background:repeating-linear-gradient(90deg,#7774 0 1px,transparent 1px 10%);position:relative;cursor:ew-resize;touch-action:none;border:1px solid #7776;border-radius:8px;margin:10px 0}
+.v18-ruler-progress{position:absolute;inset:0 auto 0 0;background:#f3ca4933;width:0%;pointer-events:none}
+.v18-ruler-playhead{position:absolute;top:-4px;bottom:-4px;width:3px;background:#f4c848;left:0%;pointer-events:none}
+@media(max-width:700px){.v18-project-home{padding:12px}.v18-studio-top{flex-direction:column;align-items:stretch}.v18-preview-toolbar{justify-content:center}.v18-workspace{display:flex;flex-direction:column-reverse}.v18-workspace>.panel{width:100%;min-width:0}.v18-timeline-ruler{height:44px}}
