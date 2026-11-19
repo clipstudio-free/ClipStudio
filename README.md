@@ -1,3 +1,23 @@
+> **ClipStudio V7 update:** Source thumbnail and independently measured download, transcription, selection, and rendering stage percentages in the Shorts generator. See `INSTALLER_V7_PROGRESSION_AR_FR.md`.
+
+# ClipStudio V6 — Social Downloader et MP4 corrigé
+
+Ajout d'un sélecteur à **quatre plateformes** (YouTube, Instagram, TikTok, Facebook) avec pictogrammes, aperçu des métadonnées et miniature lorsqu'elle est accessible. Choix MP3 / MP4 et résolutions de 430p à 8K **si disponibles**. Les liens doivent pointer vers une vidéo publique à laquelle l'utilisateur a droit d'accéder et de télécharger. Certains posts privés, stories ou liens nécessitant une connexion ne fonctionnent pas.
+
+**Correction MP4 :** vérification de la présence d'une vraie piste vidéo, conversion en H.264/yuv420p et AAC si nécessaire, validation des pistes obtenues via ffprobe, avec `+faststart` pour la lecture mobile. Une vidéo 8K ne sera pas nécessairement lisible sur tous les appareils, même en H.264. Conversion volumineuse/coûteuse en CPU.
+
+**Configuration multi-utilisateur conservée :** 4 traitements Shorts et 4 téléchargements simultanés via les paramètres `MAX_CONCURRENT_SHORTS=4` / `MAX_CONCURRENT_DOWNLOADS=4`. Cela ne garantit pas huit encodages à pleine vitesse sur n'importe quel PC. Le serveur utilise des files en RAM; un redémarrage annule les tâches en cours.
+
+Voir `INSTALLER_V6_AR_FR.md` pour l'installation et les limites de la version publique. **Aucun fichier `.env.local` n'est fourni ni à publier.**
+
+---
+
+# ClipStudio V5 — Génération multi-utilisateurs (file d’attente)
+
+**Nouveau :** les demandes de génération Shorts et de téléchargement MP3/MP4 sont acceptées dans deux files d’attente séparées. Les clients voient leur position. Configuration par défaut : 100 demandes acceptées au total, 2 travaux Shorts et 2 téléchargements simultanés ; les autres attendent. Voir `INSTALLER_V5_FILE_ATTENTE_FR_AR.md` pour l’installation et les limites de ce serveur domestique. Les données en file ne survivent pas au redémarrage de Python.
+
+---
+
 > **NEW:** See `MISE_A_JOUR_FR_AR.md` for the YouTube downloader, MP3/MP4 selection, mobile logout, daily quotas, and update instructions.
 
 # ClipStudio Free V2

@@ -10,16 +10,26 @@ const configured=/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(endpoint) && (a
 const supabase=configured?createClient(endpoint,apiKey):null;
 const app=document.querySelector('#app');
 const subtitlePrefs={style:'clean',font:'Arial Black',color:'#FFE34D',size:40,animation:'pop',position:'bottom',text:'YOUR NEXT VIRAL MOMENT'};
-const state={user:null,page:'home',authMode:'login',lang:localStorage.getItem('clipstudio-lang')||'en',theme:localStorage.getItem('clipstudio-theme')||'system',projects:[],activity:[],profile:null,notice:'',error:false,working:false,selectedFile:null,editing:null,downloadUrl:null};
+const state={user:null,page:'home',authMode:'login',lang:localStorage.getItem('clipstudio-lang')||'en',theme:localStorage.getItem('clipstudio-theme')||'system',projects:[],activity:[],profile:null,notice:'',error:false,working:false,selectedFile:null,editing:null,downloadUrl:null,mediaPlatform:'youtube'};
 if(!dict[state.lang])state.lang='en';
 const t=(key)=>dict[state.lang]?.[key]||dict.en[key]||key;
 const mediaMessages={
- en:{nav:'YouTube Downloader',heading:'Download a YouTube video',subtitle:'Paste the link to a video you own or have permission to download.',url:'YouTube link',preview:'Video information',format:'Format',quality:'Video quality',download:'Prepare download',rights:'I own this video or have permission to download it.',available:'Available source resolutions',fallback:'A lower resolution will be used if the chosen quality is unavailable. Upscaling is not performed.',audio:'MP3 audio · 192 kbps',working:'Preparing your download…',ready:'Your file is ready!',save:'Download file',quota:'Daily usage',clipQuota:'Shorts',mediaQuota:'Downloads',unlimited:'Unlimited',remaining:'remaining',reset:'Resets at midnight UTC',previewLoading:'Loading video thumbnail…',previewError:'Could not load the thumbnail. Check the link and server.',enterUrl:'Paste a YouTube link first.',confirmRights:'Confirm that you have permission to download this content.',onlineWarning:'The video server must be running and publicly reachable. Cloudflare hosts the interface only.',duration:'Duration',status:'Status'},
- fr:{nav:'Téléchargement YouTube',heading:'Télécharger une vidéo YouTube',subtitle:'Collez le lien de votre vidéo, ou d’une vidéo que vous êtes autorisé à télécharger.',url:'Lien YouTube',preview:'Aperçu de la vidéo',format:'Format',quality:'Qualité vidéo',download:'Préparer le téléchargement',rights:'Je possède cette vidéo ou je suis autorisé à la télécharger.',available:'Résolutions disponibles',fallback:'Si la qualité demandée est indisponible, la meilleure qualité inférieure sera utilisée. Pas d’agrandissement artificiel.',audio:'Audio MP3 · 192 kb/s',working:'Préparation du téléchargement…',ready:'Votre fichier est prêt !',save:'Télécharger le fichier',quota:'Utilisation quotidienne',clipQuota:'Shorts',mediaQuota:'Téléchargements',unlimited:'Illimité',remaining:'restants',reset:'Remise à zéro à minuit UTC',previewLoading:'Chargement de la miniature…',previewError:'Miniature indisponible. Vérifiez le lien et le serveur.',enterUrl:'Collez d’abord un lien YouTube.',confirmRights:'Confirmez votre droit de télécharger cette vidéo.',onlineWarning:'Le serveur vidéo doit fonctionner et être accessible en ligne. Cloudflare héberge uniquement l’interface.',duration:'Durée',status:'Statut'},
- ar:{nav:'تحميل يوتيوب',heading:'تحميل فيديو من يوتيوب',subtitle:'ألصق رابط فيديو تملكه أو لديك إذن بتحميله.',url:'رابط يوتيوب',preview:'معاينة الفيديو',format:'الصيغة',quality:'جودة الفيديو',download:'تحضير التحميل',rights:'أنا أملك هذا الفيديو أو لدي إذن بتحميله.',available:'الجودات الموجودة في المصدر',fallback:'إذا لم تتوفر الجودة المختارة فسيتم استعمال أفضل جودة أقل منها، بدون تكبير اصطناعي.',audio:'صوت MP3 · 192 كيلوبت/ث',working:'جاري تحضير الملف…',ready:'الملف جاهز!',save:'تحميل الملف',quota:'الاستخدام اليومي',clipQuota:'الشورتات',mediaQuota:'التحميلات',unlimited:'غير محدود',remaining:'متبقية',reset:'يتجدد الرصيد عند منتصف الليل UTC',previewLoading:'جاري جلب الصورة المصغرة…',previewError:'تعذر جلب الصورة. تحقق من الرابط والسيرفر.',enterUrl:'ألصق رابط يوتيوب أولاً.',confirmRights:'أكد أنك تملك حق تحميل الفيديو.',onlineWarning:'يجب أن يكون سيرفر الفيديو شغالاً ومتاحاً عبر الإنترنت. Cloudflare يستضيف الواجهة فقط.',duration:'المدة',status:'الحالة'},
- es:{nav:'Descargas de YouTube',heading:'Descargar video de YouTube',subtitle:'Pega un enlace a un video propio o autorizado para descargar.',url:'Enlace de YouTube',preview:'Vista previa',format:'Formato',quality:'Calidad de video',download:'Preparar descarga',rights:'Soy propietario o tengo permiso para descargar este video.',available:'Resoluciones disponibles',fallback:'Se usará la mejor resolución inferior si no está disponible. No se amplía artificialmente.',audio:'Audio MP3 · 192 kbps',working:'Preparando descarga…',ready:'¡Archivo listo!',save:'Descargar archivo',quota:'Uso diario',clipQuota:'Shorts',mediaQuota:'Descargas',unlimited:'Ilimitado',remaining:'restantes',reset:'Se reinicia a medianoche UTC',previewLoading:'Cargando miniatura…',previewError:'No se pudo cargar la miniatura. Revisa el enlace y el servidor.',enterUrl:'Primero pega un enlace de YouTube.',confirmRights:'Confirma que tienes permiso para descargarlo.',onlineWarning:'El servidor de video debe estar en ejecución y accesible. Cloudflare aloja solamente la interfaz.',duration:'Duración',status:'Estado'}
+ en:{nav:'Social Downloader',heading:'Download videos from YouTube, Instagram, TikTok & Facebook',subtitle:'Choose a platform and paste the link to a public video you are authorized to download.',url:'Video link',preview:'Video information',format:'Format',quality:'Video quality',download:'Prepare download',rights:'I own this video or have permission to download it.',available:'Available source resolutions',fallback:'A lower resolution will be used if the chosen quality is unavailable. Upscaling is not performed.',audio:'MP3 audio · 192 kbps',working:'Preparing your download…',ready:'Your file is ready!',save:'Download file',quota:'Daily usage',clipQuota:'Shorts',mediaQuota:'Downloads',unlimited:'Unlimited',remaining:'remaining',reset:'Resets at midnight UTC',previewLoading:'Loading video thumbnail…',previewError:'Preview unavailable. The video may be private or require a login.',enterUrl:'Paste a video link first.',confirmRights:'Confirm that you have permission to download this content.',onlineWarning:'The video server must be running and publicly reachable. Cloudflare hosts the interface only.',duration:'Duration',status:'Status',choosePlatform:'Choose a platform',unsupported:'Choose a video from YouTube, Instagram, TikTok or Facebook.',mp4Note:'MP4 is prepared for mobile playback (H.264 video + AAC audio). Very high resolutions may exceed device capabilities.'},
+ fr:{nav:'Téléchargement réseaux sociaux',heading:'Télécharger depuis YouTube, Instagram, TikTok et Facebook',subtitle:'Choisissez une plateforme et collez un lien public que vous êtes autorisé à télécharger.',url:'Lien de la vidéo',preview:'Aperçu de la vidéo',format:'Format',quality:'Qualité vidéo',download:'Préparer le téléchargement',rights:'Je possède cette vidéo ou je suis autorisé à la télécharger.',available:'Résolutions disponibles',fallback:'Si la qualité demandée est indisponible, la meilleure qualité inférieure sera utilisée. Pas d’agrandissement artificiel.',audio:'Audio MP3 · 192 kb/s',working:'Préparation du téléchargement…',ready:'Votre fichier est prêt !',save:'Télécharger le fichier',quota:'Utilisation quotidienne',clipQuota:'Shorts',mediaQuota:'Téléchargements',unlimited:'Illimité',remaining:'restants',reset:'Remise à zéro à minuit UTC',previewLoading:'Chargement de la miniature…',previewError:'Miniature indisponible. Vérifiez le lien et le serveur.',enterUrl:'Collez d’abord un lien vidéo.',confirmRights:'Confirmez votre droit de télécharger cette vidéo.',onlineWarning:'Le serveur vidéo doit fonctionner et être accessible en ligne. Cloudflare héberge uniquement l’interface.',duration:'Durée',status:'Statut',choosePlatform:'Choisir une plateforme',unsupported:'Choisissez une vidéo de YouTube, Instagram, TikTok ou Facebook.',mp4Note:'MP4 compatible avec les mobiles (vidéo H.264 + audio AAC). Les résolutions extrêmes ne fonctionnent pas sur tous les appareils.'},
+ ar:{nav:'تحميل الفيديوهات',heading:'تحميل فيديوهات YouTube وInstagram وTikTok وFacebook',subtitle:'اختر المنصة وألصق رابط فيديو عام تملكه أو لديك إذن بتحميله.',url:'رابط الفيديو',preview:'معاينة الفيديو',format:'الصيغة',quality:'جودة الفيديو',download:'تحضير التحميل',rights:'أنا أملك هذا الفيديو أو لدي إذن بتحميله.',available:'الجودات الموجودة في المصدر',fallback:'إذا لم تتوفر الجودة المختارة فسيتم استعمال أفضل جودة أقل منها، بدون تكبير اصطناعي.',audio:'صوت MP3 · 192 كيلوبت/ث',working:'جاري تحضير الملف…',ready:'الملف جاهز!',save:'تحميل الملف',quota:'الاستخدام اليومي',clipQuota:'الشورتات',mediaQuota:'التحميلات',unlimited:'غير محدود',remaining:'متبقية',reset:'يتجدد الرصيد عند منتصف الليل UTC',previewLoading:'جاري جلب الصورة المصغرة…',previewError:'تعذر جلب الصورة. تحقق من الرابط والسيرفر.',enterUrl:'ألصق رابط الفيديو أولاً.',confirmRights:'أكد أنك تملك حق تحميل الفيديو.',onlineWarning:'يجب أن يكون سيرفر الفيديو شغالاً ومتاحاً عبر الإنترنت. Cloudflare يستضيف الواجهة فقط.',duration:'المدة',status:'الحالة',choosePlatform:'اختر المنصة',unsupported:'أدخل رابط فيديو من YouTube أو Instagram أو TikTok أو Facebook.',mp4Note:'ملف MP4 يحتوي على صورة H.264 وصوت AAC لتوافق أفضل مع الهواتف. الدقة العالية جداً قد لا تدعمها بعض الأجهزة.'},
+ es:{nav:'Descargas de redes sociales',heading:'Descargar de YouTube, Instagram, TikTok y Facebook',subtitle:'Elige una plataforma y pega un enlace público que tengas permiso para descargar.',url:'Enlace del video',preview:'Vista previa',format:'Formato',quality:'Calidad de video',download:'Preparar descarga',rights:'Soy propietario o tengo permiso para descargar este video.',available:'Resoluciones disponibles',fallback:'Se usará la mejor resolución inferior si no está disponible. No se amplía artificialmente.',audio:'Audio MP3 · 192 kbps',working:'Preparando descarga…',ready:'¡Archivo listo!',save:'Descargar archivo',quota:'Uso diario',clipQuota:'Shorts',mediaQuota:'Descargas',unlimited:'Ilimitado',remaining:'restantes',reset:'Se reinicia a medianoche UTC',previewLoading:'Cargando miniatura…',previewError:'No se pudo cargar la miniatura. Revisa el enlace y el servidor.',enterUrl:'Primero pega un enlace de video.',confirmRights:'Confirma que tienes permiso para descargarlo.',onlineWarning:'El servidor de video debe estar en ejecución y accesible. Cloudflare aloja solamente la interfaz.',duration:'Duración',status:'Estado',choosePlatform:'Elegir plataforma',unsupported:'Elige un vídeo de YouTube, Instagram, TikTok o Facebook.',mp4Note:'MP4 preparado para móviles (H.264 + AAC). Los dispositivos pueden no soportar resoluciones extremas.',}
 };
 const mt=key=>mediaMessages[state.lang]?.[key]||mediaMessages.en[key]||key;
+const generatorMessages={
+ ar:{source:'معاينة الفيديو المصدر',loading:'جاري جلب معلومات الفيديو...',unavailable:'تعذر جلب المعلومات الإضافية. الصورة المصغرة ظاهرة إذا كانت متاحة.',local:'الملف المحلي المختار سيُستعمل بدل الرابط.',download:'تحميل الفيديو المصدر',transcription:'تحليل الكلام والتفريغ الصوتي',selection:'اختيار أفضل 4 مقاطع',render:'إنشاء المقاطع الأربعة',clips:'تقدم كل Short',initial:'جاهز للبدء',ready:'اكتمل',noTotal:'عند عدم معرفة حجم الفيديو، قد تبقى نسبة التحميل 0% حتى اكتماله.',
+ },
+ fr:{source:'Aperçu de la vidéo source',loading:'Chargement des informations vidéo…',unavailable:'Informations supplémentaires indisponibles. La miniature reste visible si accessible.',local:'Le fichier local sélectionné sera utilisé à la place du lien.',download:'Téléchargement de la vidéo source',transcription:'Transcription et analyse de la parole',selection:'Sélection des 4 meilleurs extraits',render:'Création des 4 Shorts',clips:'Progression par Short',initial:'Prêt à démarrer',ready:'Terminé',noTotal:'Si la taille est inconnue, le téléchargement peut afficher 0 % jusqu’à la fin.'},
+ en:{source:'Source video preview',loading:'Loading video details…',unavailable:'Additional details unavailable. Thumbnail shown when accessible.',local:'The selected local file will be used instead of the link.',download:'Downloading source video',transcription:'Speech transcription and analysis',selection:'Selecting four clips',render:'Rendering four Shorts',clips:'Individual Short progress',initial:'Ready to start',ready:'Completed',noTotal:'If the file size is unknown, download progress may stay at 0% until complete.'},
+ es:{source:'Vista previa del video',loading:'Cargando información…',unavailable:'No se pudieron cargar más detalles. Se muestra la miniatura si está disponible.',local:'Se usará el archivo local en lugar del enlace.',download:'Descargando video fuente',transcription:'Transcripción y análisis de voz',selection:'Selección de cuatro fragmentos',render:'Creación de cuatro Shorts',clips:'Progreso de cada Short',initial:'Listo para empezar',ready:'Completado',noTotal:'Si se desconoce el tamaño, la descarga puede mostrar 0% hasta completarse.'}
+};
+const gt=key=>generatorMessages[state.lang]?.[key]||generatorMessages.en[key]||key;
+const GENERATOR_STAGES=['download','transcription','selection','render'];
+
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt=d=>new Date(d).toLocaleString(state.lang==='ar'?'ar-MA':state.lang,{dateStyle:'medium',timeStyle:'short'});
 const safeError=e=>{const m=String(e?.message||e||t('error'));if(/Invalid API key/i.test(m))return 'Invalid API key: check that your .env.local Publishable Key and Project URL belong to the same Supabase project, then restart Vite.';return m;};
@@ -37,15 +47,44 @@ function projectCard(p){return `<article class="project-card"><div class="thumb"
 function dashboard(){const exports=state.projects.filter(p=>p.status==='exported').length;return workspace(`<div class="page-title"><span class="eyebrow">YOUR CREATIVE SPACE</span><h1>${t('welcome')} ✦</h1><p>${esc(state.profile?.display_name||state.user?.email||'')}</p></div><div class="stats"><div class="stat"><span>${t('total')}</span><strong>${state.projects.length}</strong></div><div class="stat"><span>${t('exports')}</span><strong>${exports}</strong></div><div class="stat"><span>${t('activity')}</span><strong>${state.activity.length}</strong></div></div><div class="section-head"><h2>${t('recent')}</h2><button class="btn primary" data-page="newclip">+ ${t('newclip')}</button></div><div class="project-grid">${state.projects.length?state.projects.slice(0,6).map(projectCard).join(''):`<div class="empty">${t('empty')}</div>`}</div>`);}
 function library(){return workspace(`<div class="section-head"><div><span class="eyebrow">YOUR WORK</span><h1>${t('library')}</h1></div><button class="btn primary" data-page="newclip">+ ${t('newclip')}</button></div><div class="project-grid">${state.projects.length?state.projects.map(projectCard).join(''):`<div class="empty">${t('empty')}</div>`}</div>`);}
 function history(){return workspace(`<div class="page-title"><h1>${t('history')}</h1></div><div class="timeline">${state.activity.length?state.activity.map(a=>`<div class="timeline-row"><span class="timeline-dot"></span><div><strong>${esc(a.action.replaceAll('_',' '))}</strong><p>${esc(a.details||'')}</p><small>${fmt(a.created_at)}</small></div></div>`).join(''):`<div class="empty">${t('empty')}</div>`}</div>`);}
-function newclip(){const p=state.projects.find(p=>p.id===state.editing);return workspace(`<div class="page-title"><span class="eyebrow">CREATE</span><h1>${t('newclip')} ✂</h1><p>${t('clipNotice')}</p></div><div class="quick-media-link"><button type="button" class="btn outline" data-page="downloads">⬇ ${mt('nav')} · MP4 / MP3</button></div><div class="editor-grid"><div class="panel"><form id="project-form"><label>${t('title')}<input name="title" required maxlength="150" value="${esc(p?.title||'')}" placeholder="My next clip" /></label><label>${t('source')}<input name="source" type="url" value="${esc(p?.source_url||'')}" placeholder="https://www.youtube.com/watch?v=..." /></label><label>${t('upload')}<input name="file" id="video-file" type="file" accept="video/*" /></label><div class="two-cols"><label>${t('start')}<input name="start" type="number" step="0.1" min="0" value="${p?.clip_start??0}" required /></label><label>${t('end')}<input name="end" type="number" step="0.1" min="0.1" value="${p?.clip_end??30}" required /></label></div><fieldset class="subtitle-controls"><legend>Subtitle design · Preview only</legend><label>Text (manual demo)<input id="caption-text" type="text" maxlength="150" value="YOUR NEXT VIRAL MOMENT" /></label><div class="two-cols"><label>Style<select id="caption-style"><option value="clean">Clean · No box</option><option value="boxed">Word Box</option></select></label><label>Font<select id="caption-font"><option>Arial Black</option><option>Arial</option><option>Impact</option><option>Georgia</option></select></label><label>Color<input id="caption-color" type="color" value="#ffe34d" /></label><label>Size (px)<input id="caption-size" type="number" min="18" max="64" value="40" /></label><label>Animation<select id="caption-animation"><option value="pop">Pop</option><option value="none">None</option></select></label><label>Position<select id="caption-position"><option value="bottom">Bottom</option><option value="center">Center</option><option value="top">Top</option></select></label></div><small>Preview demonstration: words are not transcribed or timed to speech. Captions are not burned into exported MP4 yet.</small></fieldset><section class="auto-generator" style="padding:18px;margin:18px 0;border:1px solid #7a7a7a;border-radius:14px"><h2>✨ Automatic 4 Shorts Generator</h2><p>Paste a public YouTube link OR choose a local file above. No start/end times needed. Requires the Windows backend.</p><label>Clip length <select id="auto-seconds"><option value="30">30 seconds</option><option value="15">15 seconds</option><option value="45">45 seconds</option><option value="60">60 seconds</option></select></label><button class="btn primary" id="auto-generate" type="button">Generate 4 Shorts automatically</button><div id="auto-status" role="status" style="margin:12px 0"></div><div id="quota-feedback" class="quota-feedback" aria-live="polite"></div><div id="auto-progress" class="auto-progress" aria-label="Progression des quatre Shorts"><div class="clip-progress"><div class="clip-progress-heading"><strong>Short 1</strong><span id="short-percent-1">0%</span></div><progress id="short-progress-1" max="100" value="0"></progress></div><div class="clip-progress"><div class="clip-progress-heading"><strong>Short 2</strong><span id="short-percent-2">0%</span></div><progress id="short-progress-2" max="100" value="0"></progress></div><div class="clip-progress"><div class="clip-progress-heading"><strong>Short 3</strong><span id="short-percent-3">0%</span></div><progress id="short-progress-3" max="100" value="0"></progress></div><div class="clip-progress"><div class="clip-progress-heading"><strong>Short 4</strong><span id="short-percent-4">0%</span></div><progress id="short-progress-4" max="100" value="0"></progress></div></div><div id="auto-results" style="display:grid;gap:14px"></div></section><div class="editor-buttons"><button class="btn outline" type="submit">${t('save')}</button><button class="btn primary" type="button" id="export-video" ${state.working?'disabled':''}>${state.working?t('working'):t('export')}</button></div></form></div><div class="panel preview-panel"><div class="preview-title">PREVIEW · 9:16</div><div class="preview-frame" id="preview-frame"><video id="video-preview" controls playsinline></video><div id="caption-overlay" class="caption-overlay" aria-live="off"></div><div class="preview-placeholder">▶<small>YOUR VIDEO PREVIEW</small></div></div><div class="notice">${t('subtitleNotice')}</div><div class="notice">${t('localNotice')}</div><div id="export-status" role="status"></div></div></div>`);}
+function newclip(){const p=state.projects.find(p=>p.id===state.editing);return workspace(`<div class="page-title"><span class="eyebrow">CREATE</span><h1>${t('newclip')} ✂</h1><p>${t('clipNotice')}</p></div><div class="quick-media-link"><button type="button" class="btn outline" data-page="downloads">⬇ ${mt('nav')} · MP4 / MP3</button></div><div class="editor-grid"><div class="panel"><form id="project-form"><label>${t('title')}<input name="title" required maxlength="150" value="${esc(p?.title||'')}" placeholder="My next clip" /></label><label>${t('source')}<input name="source" type="url" value="${esc(p?.source_url||'')}" placeholder="https://www.youtube.com/watch?v=..." /></label><label>${t('upload')}<input name="file" id="video-file" type="file" accept="video/*" /></label><div class="two-cols"><label>${t('start')}<input name="start" type="number" step="0.1" min="0" value="${p?.clip_start??0}" required /></label><label>${t('end')}<input name="end" type="number" step="0.1" min="0.1" value="${p?.clip_end??30}" required /></label></div><fieldset class="subtitle-controls"><legend>Subtitle design · Preview only</legend><label>Text (manual demo)<input id="caption-text" type="text" maxlength="150" value="YOUR NEXT VIRAL MOMENT" /></label><div class="two-cols"><label>Style<select id="caption-style"><option value="clean">Clean · No box</option><option value="boxed">Word Box</option></select></label><label>Font<select id="caption-font"><option>Arial Black</option><option>Arial</option><option>Impact</option><option>Georgia</option></select></label><label>Color<input id="caption-color" type="color" value="#ffe34d" /></label><label>Size (px)<input id="caption-size" type="number" min="18" max="64" value="40" /></label><label>Animation<select id="caption-animation"><option value="pop">Pop</option><option value="none">None</option></select></label><label>Position<select id="caption-position"><option value="bottom">Bottom</option><option value="center">Center</option><option value="top">Top</option></select></label></div><small>Preview demonstration: words are not transcribed or timed to speech. Captions are not burned into exported MP4 yet.</small></fieldset><section class="auto-generator" style="padding:18px;margin:18px 0;border:1px solid #7a7a7a;border-radius:14px"><h2>✨ Automatic 4 Shorts Generator</h2><p>Paste a public YouTube link OR choose a local file above. No start/end times needed. Requires the Windows backend.</p><h3 class="generator-small-heading">${gt('source')}</h3><div id="generator-video-preview" class="generator-video-preview" hidden></div><div id="generator-preview-status" class="generator-preview-status" role="status"></div><label>Clip length <select id="auto-seconds"><option value="30">30 seconds</option><option value="15">15 seconds</option><option value="45">45 seconds</option><option value="60">60 seconds</option></select></label><button class="btn primary" id="auto-generate" type="button">Generate 4 Shorts automatically</button><div id="auto-status" role="status" style="margin:12px 0"></div><div id="quota-feedback" class="quota-feedback" aria-live="polite"></div><div id="generator-stage-progress" class="generator-stage-progress" aria-label="Generation stages">${GENERATOR_STAGES.map(key=>`<div class="generator-stage-item"><div class="clip-progress-heading"><strong>${gt(key)}</strong><output id="stage-percent-${key}">0%</output></div><progress id="stage-progress-${key}" max="100" value="0"></progress></div>`).join('')}</div><p class="generator-help">${gt('noTotal')}</p><h3 class="generator-small-heading">${gt('clips')}</h3><div id="auto-progress" class="auto-progress" aria-label="Progression des quatre Shorts"><div class="clip-progress"><div class="clip-progress-heading"><strong>Short 1</strong><span id="short-percent-1">0%</span></div><progress id="short-progress-1" max="100" value="0"></progress></div><div class="clip-progress"><div class="clip-progress-heading"><strong>Short 2</strong><span id="short-percent-2">0%</span></div><progress id="short-progress-2" max="100" value="0"></progress></div><div class="clip-progress"><div class="clip-progress-heading"><strong>Short 3</strong><span id="short-percent-3">0%</span></div><progress id="short-progress-3" max="100" value="0"></progress></div><div class="clip-progress"><div class="clip-progress-heading"><strong>Short 4</strong><span id="short-percent-4">0%</span></div><progress id="short-progress-4" max="100" value="0"></progress></div></div><div id="auto-results" style="display:grid;gap:14px"></div></section><div class="editor-buttons"><button class="btn outline" type="submit">${t('save')}</button><button class="btn primary" type="button" id="export-video" ${state.working?'disabled':''}>${state.working?t('working'):t('export')}</button></div></form></div><div class="panel preview-panel"><div class="preview-title">PREVIEW · 9:16</div><div class="preview-frame" id="preview-frame"><video id="video-preview" controls playsinline></video><div id="caption-overlay" class="caption-overlay" aria-live="off"></div><div class="preview-placeholder">▶<small>YOUR VIDEO PREVIEW</small></div></div><div class="notice">${t('subtitleNotice')}</div><div class="notice">${t('localNotice')}</div><div id="export-status" role="status"></div></div></div>`);}
+
+const SOCIAL_PLATFORMS=['youtube','instagram','tiktok','facebook'];
+const SOCIAL_PLACEHOLDERS={
+ youtube:'https://www.youtube.com/watch?v=…',
+ instagram:'https://www.instagram.com/reel/…',
+ tiktok:'https://www.tiktok.com/@creator/video/…',
+ facebook:'https://www.facebook.com/reel/…'
+};
+function mediaPlatformFromUrl(raw){
+ try{
+  const u=new URL(raw);if(u.protocol!=='https:')return '';
+  const h=u.hostname.toLowerCase();
+  if(['youtube.com','www.youtube.com','m.youtube.com','youtu.be'].includes(h))return 'youtube';
+  if(['instagram.com','www.instagram.com','m.instagram.com','instagr.am','www.instagr.am'].includes(h))return 'instagram';
+  if(['tiktok.com','www.tiktok.com','m.tiktok.com','vm.tiktok.com','vt.tiktok.com'].includes(h))return 'tiktok';
+  if(['facebook.com','www.facebook.com','m.facebook.com','web.facebook.com','fb.watch','www.fb.watch','fb.com','www.fb.com'].includes(h))return 'facebook';
+ }catch{}return '';
+}
+function mediaPlatformIcon(platform){
+ const base='class="brand-svg" viewBox="0 0 32 32" width="34" height="34" role="img" aria-label="'+platform+'"';
+ if(platform==='youtube')return `<svg ${base}><rect x="2" y="6" width="28" height="20" rx="6" fill="#FF0033"/><path d="m13 11 10 5-10 5Z" fill="#fff"/></svg>`;
+ if(platform==='instagram')return `<svg ${base}><defs><linearGradient id="brand-instagram" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#ffd776"/><stop offset=".35" stop-color="#f34c65"/><stop offset=".7" stop-color="#c3299c"/><stop offset="1" stop-color="#6549c7"/></linearGradient></defs><rect x="2" y="2" width="28" height="28" rx="8" fill="url(#brand-instagram)"/><rect x="8" y="8" width="16" height="16" rx="5" fill="none" stroke="#fff" stroke-width="2.2"/><circle cx="16" cy="16" r="4.1" fill="none" stroke="#fff" stroke-width="2.2"/><circle cx="22" cy="10" r="1.4" fill="#fff"/></svg>`;
+ if(platform==='tiktok')return `<svg ${base}><rect x="2" y="2" width="28" height="28" rx="7" fill="#101014"/><path d="M19 7c.2 5.1 2.7 6.6 6.4 6.6v4c-2.3 0-4.6-.9-6.4-2v7.1c0 7.3-11.7 7.6-11.7.1 0-4.4 3.8-7.1 8-6.1v4c-2.5-.8-4 1-4 2.9 0 3 4.7 3.3 4.7-.6V7Z" fill="#25F4EE" transform="translate(-1,1)"/><path d="M19 7c.2 5.1 2.7 6.6 6.4 6.6v4c-2.3 0-4.6-.9-6.4-2v7.1c0 7.3-11.7 7.6-11.7.1 0-4.4 3.8-7.1 8-6.1v4c-2.5-.8-4 1-4 2.9 0 3 4.7 3.3 4.7-.6V7Z" fill="#FE2C55" transform="translate(1,-1)"/><path d="M19 7c.2 5.1 2.7 6.6 6.4 6.6v4c-2.3 0-4.6-.9-6.4-2v7.1c0 7.3-11.7 7.6-11.7.1 0-4.4 3.8-7.1 8-6.1v4c-2.5-.8-4 1-4 2.9 0 3 4.7 3.3 4.7-.6V7Z" fill="#fff"/></svg>`;
+ return `<svg ${base}><rect x="2" y="2" width="28" height="28" rx="7" fill="#0866FF"/><path d="M19 28V18h3.3l.5-4H19v-2.4c0-1.1.4-1.8 1.9-1.8H23V6.3c-.4-.1-1.8-.3-3.3-.3-3.4 0-5.6 2-5.6 5.7V14h-3v4h3v10Z" fill="#fff"/></svg>`;
+}
+function mediaPlatformPicker(){
+ return `<div class="media-platform-picker"><strong class="media-platform-label">${mt('choosePlatform')}</strong><div class="media-platform-grid">${SOCIAL_PLATFORMS.map(platform=>`<button type="button" class="media-platform-choice ${state.mediaPlatform===platform?'selected':''}" data-platform="${platform}" aria-pressed="${state.mediaPlatform===platform}">${mediaPlatformIcon(platform)}<span>${platform==='youtube'?'YouTube':platform==='tiktok'?'TikTok':platform==='instagram'?'Instagram':'Facebook'}</span></button>`).join('')}</div></div>`;
+}
 function downloads(){return workspace(`<div class="page-title"><span class="eyebrow">CLIPSTUDIO · MEDIA</span><h1>⬇ ${mt('heading')}</h1><p>${mt('subtitle')}</p></div>
 <div class="panel media-panel">
 <form id="media-form">
-<label>${mt('url')}<input id="media-url" type="url" name="url" autocomplete="off" inputmode="url" placeholder="https://www.youtube.com/watch?v=…" required /></label>
+${mediaPlatformPicker()}
+<label>${mt('url')}<input id="media-url" type="url" name="url" autocomplete="off" inputmode="url" placeholder="${SOCIAL_PLACEHOLDERS[state.mediaPlatform]}" required /></label>
 <div id="media-preview-status" class="media-muted" role="status">${mt('preview')}</div>
 <div id="media-preview" class="media-preview" hidden></div>
 <div class="media-options"><label>${mt('format')}<select name="format" id="media-format"><option value="mp4">MP4 — Video</option><option value="mp3">MP3 — Audio</option></select></label><label id="media-quality-field">${mt('quality')}<select name="quality" id="media-quality"><option value="430">430p</option><option value="720" selected>720p (HD)</option><option value="1080">1080p (Full HD)</option><option value="2160">4K (2160p)</option><option value="4320">8K (4320p)</option></select></label></div>
-<div id="media-quality-note" class="media-muted">${mt('fallback')}</div>
+<div id="media-quality-note" class="media-muted">${mt('fallback')}</div><div class="media-muted">${mt('mp4Note')}</div>
 <label class="media-confirm"><input type="checkbox" name="rights_confirmed" id="media-rights" required /><span>${mt('rights')}</span></label>
 <button class="btn primary media-start" id="media-start" type="submit">⬇ ${mt('download')}</button>
 </form>
@@ -57,7 +96,7 @@ function downloads(){return workspace(`<div class="page-title"><span class="eyeb
 </div>`);}
 function settings(){return workspace(`<div class="page-title"><h1>${t('settings')}</h1></div><div class="panel settings-panel"><form id="settings-form"><label>${t('profile')} — ${t('name')}<input name="display_name" maxlength="80" value="${esc(state.profile?.display_name||'')}" /></label><label>${t('language')}<select name="language">${Object.entries(languages).map(([k,v])=>`<option value="${k}" ${state.lang===k?'selected':''}>${v}</option>`).join('')}</select></label><label>${t('appearance')}<select name="theme">${['system','dark','light'].map(k=>`<option value="${k}" ${state.theme===k?'selected':''}>${t(k)}</option>`).join('')}</select></label><button class="btn primary" type="submit">${t('saveSettings')}</button></form><div class="settings-foot">${esc(state.user?.email||'')}<button type="button" id="logout-settings" class="btn outline settings-logout">↪ ${t('logout')}</button></div></div>`);}
 function render(){applyTheme();app.innerHTML=(state.user?({dashboard,library,history,newclip,downloads,settings,home:landing}[state.page]||dashboard)():state.page==='auth'?auth():landing())+(state.notice?`<div class="toast ${state.error?'error':''}" role="status">${esc(state.notice)} <button id="close-toast">×</button></div>`:'');wire();}
-function wire(){document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{const page=b.dataset.page;if(!state.user&&page!=='home'){state.authMode='login';setPage('auth');}else{if(page==='newclip'){state.editing=null;state.selectedFile=null;}setPage(page);}});document.querySelectorAll('[data-auth]').forEach(b=>b.onclick=()=>{state.authMode=b.dataset.auth;setPage('auth');});document.querySelectorAll('[data-scroll]').forEach(b=>b.onclick=()=>document.getElementById(b.dataset.scroll)?.scrollIntoView({behavior:'smooth'}));document.querySelectorAll('#quick-lang').forEach(s=>s.onchange=()=>{state.lang=s.value;localStorage.setItem('clipstudio-lang',state.lang);render();});document.querySelector('#theme-cycle')?.addEventListener('click',()=>{state.theme=state.theme==='system'?'dark':state.theme==='dark'?'light':'system';localStorage.setItem('clipstudio-theme',state.theme);render();});document.querySelectorAll('#logout,#logout-top,#logout-mobile,#logout-settings').forEach(b=>b.onclick=async()=>{const {error}=await supabase.auth.signOut();if(error)flash(safeError(error),true);});document.querySelector('#close-toast')?.addEventListener('click',()=>{state.notice='';render();});document.querySelector('#auth-form')?.addEventListener('submit',submitAuth);document.querySelector('#google')?.addEventListener('click',async()=>{const {error}=await supabase.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+'/'} });if(error)flash(safeError(error),true);});document.querySelector('#project-form')?.addEventListener('submit',saveProject);document.querySelector('#video-file')?.addEventListener('change',e=>{state.selectedFile=e.target.files?.[0]||null;const v=document.querySelector('#video-preview');if(v){if(v.dataset.blob)URL.revokeObjectURL(v.dataset.blob);if(state.selectedFile){v.src=URL.createObjectURL(state.selectedFile);v.dataset.blob=v.src;document.querySelector('.preview-placeholder')?.remove();}else v.removeAttribute('src');}});document.querySelector('#export-video')?.addEventListener('click',exportClip);document.querySelector('#auto-generate')?.addEventListener('click',generateFourShorts);initSubtitlePreview();initMediaPage();if(state.page==='newclip'||state.page==='downloads')refreshQuota();document.querySelector('#settings-form')?.addEventListener('submit',saveSettings);document.querySelectorAll('[data-delete]').forEach(b=>b.onclick=()=>deleteProject(b.dataset.delete));document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{state.editing=b.dataset.edit;state.selectedFile=null;setPage('newclip');});}
+function wire(){document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{const page=b.dataset.page;if(!state.user&&page!=='home'){state.authMode='login';setPage('auth');}else{if(page==='newclip'){state.editing=null;state.selectedFile=null;}setPage(page);}});document.querySelectorAll('[data-auth]').forEach(b=>b.onclick=()=>{state.authMode=b.dataset.auth;setPage('auth');});document.querySelectorAll('[data-scroll]').forEach(b=>b.onclick=()=>document.getElementById(b.dataset.scroll)?.scrollIntoView({behavior:'smooth'}));document.querySelectorAll('#quick-lang').forEach(s=>s.onchange=()=>{state.lang=s.value;localStorage.setItem('clipstudio-lang',state.lang);render();});document.querySelector('#theme-cycle')?.addEventListener('click',()=>{state.theme=state.theme==='system'?'dark':state.theme==='dark'?'light':'system';localStorage.setItem('clipstudio-theme',state.theme);render();});document.querySelectorAll('#logout,#logout-top,#logout-mobile,#logout-settings').forEach(b=>b.onclick=async()=>{const {error}=await supabase.auth.signOut();if(error)flash(safeError(error),true);});document.querySelector('#close-toast')?.addEventListener('click',()=>{state.notice='';render();});document.querySelector('#auth-form')?.addEventListener('submit',submitAuth);document.querySelector('#google')?.addEventListener('click',async()=>{const {error}=await supabase.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+'/'} });if(error)flash(safeError(error),true);});document.querySelector('#project-form')?.addEventListener('submit',saveProject);document.querySelector('#video-file')?.addEventListener('change',e=>{state.selectedFile=e.target.files?.[0]||null;const v=document.querySelector('#video-preview');if(v){if(v.dataset.blob)URL.revokeObjectURL(v.dataset.blob);if(state.selectedFile){v.src=URL.createObjectURL(state.selectedFile);v.dataset.blob=v.src;document.querySelector('.preview-placeholder')?.remove();}else v.removeAttribute('src');}updateGeneratorLocalIndicator();});document.querySelector('#export-video')?.addEventListener('click',exportClip);document.querySelector('#auto-generate')?.addEventListener('click',generateFourShorts);initGeneratorSourcePreview();initSubtitlePreview();initMediaPage();if(state.page==='newclip'||state.page==='downloads')refreshQuota();document.querySelector('#settings-form')?.addEventListener('submit',saveSettings);document.querySelectorAll('[data-delete]').forEach(b=>b.onclick=()=>deleteProject(b.dataset.delete));document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{state.editing=b.dataset.edit;state.selectedFile=null;setPage('newclip');});}
 async function submitAuth(e){e.preventDefault();if(!supabase)return flash(t('notConfigured'),true);const b=e.submitter;b.disabled=true;const fd=new FormData(e.currentTarget),email=String(fd.get('email')||'').trim(),password=String(fd.get('password')||'');try{let res;if(state.authMode==='login')res=await supabase.auth.signInWithPassword({email,password});else if(state.authMode==='signup')res=await supabase.auth.signUp({email,password,options:{emailRedirectTo:location.origin+'/',data:{display_name:String(fd.get('name')||'')}}});else if(state.authMode==='reset')res=await supabase.auth.resetPasswordForEmail(email,{redirectTo:location.origin+'/'});else res=await supabase.auth.updateUser({password});if(res.error)throw res.error;if(state.authMode==='reset')flash(t('resetSent'));else if(state.authMode==='signup')flash(t('signupSent'));else if(state.authMode==='update'){state.authMode='login';flash(t('saved'));}else if(res.data?.user)await signedIn(res.data.user);}catch(err){flash(safeError(err),true);}finally{b.disabled=false;}}
 async function signedIn(user){state.user=user;state.page='dashboard';state.notice='';await loadData();render();}
 async function loadData(){if(!supabase||!state.user)return;const uid=state.user.id;const [pr,ps,act]=await Promise.all([supabase.from('profiles').select('*').eq('id',uid).maybeSingle(),supabase.from('projects').select('*').order('created_at',{ascending:false}).limit(200),supabase.from('activity').select('*').order('created_at',{ascending:false}).limit(200)]);if(pr.error||ps.error||act.error){state.notice='Database not ready: run supabase/schema.sql in Supabase SQL Editor. '+safeError(pr.error||ps.error||act.error);state.error=true;}state.profile=pr.data||null;state.projects=ps.data||[];state.activity=act.data||[];if(!state.profile&&!pr.error){const name=state.user.user_metadata?.display_name||state.user.user_metadata?.full_name||'';const {error}=await supabase.from('profiles').insert({id:uid,display_name:name,language:state.lang,theme:state.theme});if(!error)state.profile={id:uid,display_name:name,language:state.lang,theme:state.theme};}if(state.profile){state.lang=state.profile.language||'en';state.theme=state.profile.theme||'system';localStorage.setItem('clipstudio-lang',state.lang);localStorage.setItem('clipstudio-theme',state.theme);}}
@@ -92,9 +131,20 @@ async function refreshQuota(){
   if(!response.ok)return;
   const data=await response.json();
   const count=k=>data[k]?.limit===0?mt('unlimited'):`${data[k]?.remaining} ${mt('remaining')} / ${data[k]?.limit}`;
-  slot.textContent=`${mt('quota')} · ${mt('clipQuota')}: ${count('shorts')} · ${mt('mediaQuota')}: ${count('downloads')} · ${mt('reset')}`;
+  const queued=Number(data.queue?.shorts_waiting||0)+Number(data.queue?.downloads_waiting||0);
+  const qlabel={ar:'طلبات في الانتظار',fr:'demandes en attente',en:'requests waiting',es:'solicitudes en espera'}[state.lang]||'requests waiting';
+  slot.textContent=`${mt('quota')} · ${mt('clipQuota')}: ${count('shorts')} · ${mt('mediaQuota')}: ${count('downloads')} · ${mt('reset')} · ${queued} ${qlabel}`;
  }catch(err){slot.textContent=mt('onlineWarning');}
 }
+
+// Live queue information returned by Python; no guessed percentage while waiting.
+function processingStatus(job){
+ if(job.status!=='queued')return job.progress||'Processing…';
+ const labels={ar:'طلبك في الانتظار، الترتيب',fr:'Demande en attente, position',
+               es:'Solicitud en cola, posición',en:'Waiting in queue, position'};
+ return `${labels[state.lang]||labels.en}: ${job.queue_position||'…'}`;
+}
+const LONG_POLL_LIMIT_MS=72*60*60*1000;
 
 let mediaPreviewController=null;
 let mediaPreviewTimer=null;
@@ -115,14 +165,84 @@ function publicYoutubeId(raw){
   return /^[a-zA-Z0-9_-]{11}$/.test(id)?id:'';
  }catch{return '';}
 }
+let generatorPreviewTimer=null;
+let generatorPreviewController=null;
+function updateGeneratorLocalIndicator(){
+ const notice=document.querySelector('#generator-preview-status');
+ if(notice&&state.selectedFile)notice.textContent=gt('local');
+}
+function initGeneratorSourcePreview(){
+ const field=document.querySelector('#project-form input[name="source"]');
+ const preview=document.querySelector('#generator-video-preview');
+ const notice=document.querySelector('#generator-preview-status');
+ if(!field||!preview||!notice)return;
+ const show=()=>{
+  clearTimeout(generatorPreviewTimer);generatorPreviewController?.abort();
+  preview.replaceChildren();preview.hidden=true;notice.textContent='';
+  const url=field.value.trim();const videoId=publicYoutubeId(url);
+  if(!videoId){if(state.selectedFile)notice.textContent=gt('local');return;}
+  const image=document.createElement('img');
+  image.src=`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+  image.loading='lazy';image.alt=gt('source');
+  image.referrerPolicy='no-referrer';
+  const details=document.createElement('div');details.className='generator-preview-details';
+  const title=document.createElement('strong');title.textContent=gt('loading');
+  const duration=document.createElement('small');duration.textContent='YouTube';
+  details.append(title,duration);preview.append(image,details);preview.hidden=false;
+  if(state.selectedFile)notice.textContent=gt('local');
+  generatorPreviewTimer=setTimeout(async()=>{
+   const controller=new AbortController();generatorPreviewController=controller;
+   try{
+    const form=new FormData();form.set('url',url);
+    const response=await fetch(GENERATOR_API+'/media/info',{
+      method:'POST',headers:await generatorHeaders(),body:form,signal:controller.signal
+    });
+    if(!response.ok)throw new Error('Metadata not available');
+    const data=await response.json();
+    if(controller.signal.aborted||field.value.trim()!==url||!preview.isConnected)return;
+    if(data.thumbnail&&String(data.thumbnail).startsWith('https://'))image.src=data.thumbnail;
+    title.textContent=data.title||'YouTube';
+    duration.textContent=`${data.channel||'YouTube'} · ${mediaDuration(data.duration)}`;
+   }catch(err){
+    if(err.name==='AbortError'||field.value.trim()!==url||!preview.isConnected)return;
+    title.textContent='YouTube';
+    if(!state.selectedFile)notice.textContent=gt('unavailable');
+   }
+  },550);
+ };
+ field.addEventListener('input',show);field.addEventListener('change',show);
+ if(field.value.trim())show();else updateGeneratorLocalIndicator();
+}
+
 function initMediaPage(){
  const form=document.querySelector('#media-form');if(!form)return;
  const url=form.querySelector('#media-url');
+ const activate=platform=>{
+  if(!SOCIAL_PLATFORMS.includes(platform))return;
+  state.mediaPlatform=platform;
+  document.querySelectorAll('[data-platform]').forEach(button=>{
+   const selected=button.dataset.platform===platform;
+   button.classList.toggle('selected',selected);
+   button.setAttribute('aria-pressed',String(selected));
+  });
+  url.placeholder=SOCIAL_PLACEHOLDERS[platform];
+ };
+ document.querySelectorAll('[data-platform]').forEach(button=>button.addEventListener('click',()=>{
+  const platform=button.dataset.platform;
+  const previous=mediaPlatformFromUrl(url.value.trim());
+  if(previous&&previous!==platform){url.value='';const box=document.querySelector('#media-preview');
+   if(box){box.replaceChildren();box.hidden=true;}}
+  mediaPreviewController?.abort();clearTimeout(mediaPreviewTimer);
+  const status=document.querySelector('#media-preview-status');if(status)status.textContent='';
+  activate(platform);
+ }));
  url.addEventListener('input',()=>{
+  const detected=mediaPlatformFromUrl(url.value.trim());if(detected)activate(detected);
   clearTimeout(mediaPreviewTimer);mediaPreviewController?.abort();
   const box=document.querySelector('#media-preview'),notice=document.querySelector('#media-preview-status');
   if(box){box.hidden=true;box.replaceChildren();}if(notice)notice.textContent='';
   if(!url.value.trim())return;
+  if(!mediaPlatformFromUrl(url.value.trim()))return;
   const videoId=publicYoutubeId(url.value.trim());
   if(videoId&&box){
    const img=document.createElement('img');img.src=`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;img.alt='YouTube thumbnail';img.loading='lazy';
@@ -151,7 +271,7 @@ async function previewMedia(url){
   box.replaceChildren();
   if(data.thumbnail){const img=document.createElement('img');img.src=data.thumbnail;img.alt='YouTube thumbnail';img.loading='lazy';box.append(img);}
   const content=document.createElement('div'),name=document.createElement('strong'),details=document.createElement('p');
-  name.textContent=data.title||'YouTube video';details.textContent=`${data.channel||''} · ${mt('duration')}: ${mediaDuration(data.duration)}`;
+  name.textContent=data.title||'Video';details.textContent=`${data.platform||''} · ${data.channel||''} · ${mt('duration')}: ${mediaDuration(data.duration)}`;
   content.append(name,details);
   if(data.heights?.length){const res=document.createElement('small');res.textContent=`${mt('available')}: ${data.heights.map(h=>h+'p').join(' · ')}`;content.append(res);}
   box.append(content);box.hidden=false;notice.textContent='';
@@ -162,23 +282,29 @@ async function startMediaDownload(event){
  const form=event.currentTarget,button=form.querySelector('#media-start'),status=document.querySelector('#media-status'),bar=document.querySelector('#media-progress'),result=document.querySelector('#media-result');
  const formdata=new FormData(form);const url=String(formdata.get('url')||'').trim();
  if(!url){status.textContent=mt('enterUrl');return;}
+ if(!mediaPlatformFromUrl(url)){status.textContent=mt('unsupported');return;}
  if(!form.querySelector('#media-rights').checked){status.textContent=mt('confirmRights');return;}
  button.disabled=true;result.replaceChildren();bar.hidden=false;bar.value=0;status.textContent=mt('working');
  try{
   const response=await fetch(GENERATOR_API+'/media/download',{method:'POST',headers:await generatorHeaders(),body:formdata});
   const started=await response.json();if(!response.ok)throw new Error(started.detail||'Download unavailable');
-  let completed=false;
-  for(let attempt=0;attempt<3600;attempt++){
-   await new Promise(resolve=>setTimeout(resolve,2000));
+  let completed=false, waitMs=2000;const deadline=Date.now()+LONG_POLL_LIMIT_MS;
+  while(Date.now()<deadline){
+   await new Promise(resolve=>setTimeout(resolve,waitMs));
    const poll=await fetch(GENERATOR_API+'/jobs/'+encodeURIComponent(started.job_id),{headers:await generatorHeaders()});
    const job=await poll.json();if(!poll.ok)throw new Error(job.detail||'Cannot check download');
-   status.textContent=job.progress||mt('working');bar.value=Math.max(0,Math.min(100,Number(job.percent)||0));
+   status.textContent=processingStatus(job);waitMs=job.status==='queued'?8000:2000;bar.value=Math.max(0,Math.min(100,Number(job.percent)||0));
    if(job.status==='error')throw new Error(job.progress||'Download failed');
    if(job.status==='done'){
     const link=document.createElement('a');link.className='btn primary media-download-link';
     link.textContent='⬇ '+mt('save');link.href=GENERATOR_API+job.url;link.rel='noopener noreferrer';
     link.download=job.filename||'clipstudio.mp4';
-    result.replaceChildren(link);status.textContent=mt('ready');bar.value=100;completed=true;break;
+    if(String(job.filename||'').toLowerCase().endsWith('.mp4')){
+     const player=document.createElement('video');player.className='media-ready-preview';
+     player.controls=true;player.playsInline=true;player.preload='metadata';player.src=link.href;
+     result.replaceChildren(player,link);
+    }else result.replaceChildren(link);
+    status.textContent=mt('ready');bar.value=100;completed=true;break;
    }
   }
   if(!completed)throw new Error('Download processing timed out');
@@ -186,40 +312,80 @@ async function startMediaDownload(event){
  finally{button.disabled=false;refreshQuota();}
 }
 
+// Animate each integer toward a *measured* percentage; never advance ahead of the API.
+function generatorProgressAnimator(){
+ const ids=[...GENERATOR_STAGES.map(k=>'stage-'+k),...Array.from({length:4},(_,i)=>'short-'+(i+1))];
+ const targets=new Map(ids.map(id=>[id,0]));
+ const shown=new Map(ids.map(id=>[id,0]));
+ ids.forEach(id=>{const bar=document.querySelector('#'+id.replace('stage-','stage-progress-').replace('short-','short-progress-'));
+  const output=document.querySelector('#'+id.replace('stage-','stage-percent-').replace('short-','short-percent-'));
+  if(bar)bar.value=0;if(output)output.textContent='0%';});
+ let timer=setInterval(()=>{
+  let pending=false;
+  for(const id of ids){
+   const actual=shown.get(id),max=targets.get(id);
+   if(actual>=max)continue;
+   pending=true;const next=actual+1;shown.set(id,next);
+   const barId=id.startsWith('stage-')?'stage-progress-'+id.slice(6):'short-progress-'+id.slice(6);
+   const labelId=id.startsWith('stage-')?'stage-percent-'+id.slice(6):'short-percent-'+id.slice(6);
+   const bar=document.getElementById(barId),label=document.getElementById(labelId);
+   if(bar)bar.value=next;if(label)label.textContent=next+'%';
+  }
+  if(!document.getElementById('auto-generate')){clearInterval(timer);timer=null;}
+ },25);
+ return {
+  set(id,value){if(!targets.has(id))return;const val=Math.max(0,Math.min(100,Math.floor(Number(value)||0)));targets.set(id,Math.max(targets.get(id),val));},
+  finish(){if(!timer)return;const check=setInterval(()=>{
+    if(!timer){clearInterval(check);return;}
+    if(ids.every(id=>shown.get(id)>=targets.get(id))){clearInterval(timer);timer=null;clearInterval(check);}
+  },100);}
+ };
+}
 async function generateFourShorts(){
- const button=document.querySelector('#auto-generate'), status=document.querySelector('#auto-status'), results=document.querySelector('#auto-results');
- const form=document.querySelector('#project-form'); const url=String(new FormData(form).get('source')||'').trim();
+ const button=document.querySelector('#auto-generate'),status=document.querySelector('#auto-status'),results=document.querySelector('#auto-results');
+ const form=document.querySelector('#project-form');const url=String(new FormData(form).get('source')||'').trim();
  const file=state.selectedFile;
  if(!file&&!url){status.textContent='Choose a local file or paste a YouTube URL.';return;}
- const payload=new FormData(); if(file)payload.append('file',file);else payload.append('url',url);
+ const payload=new FormData();if(file)payload.append('file',file);else payload.append('url',url);
  payload.append('seconds',document.querySelector('#auto-seconds').value);
- button.disabled=true;results.replaceChildren();status.textContent='Connecting to generator…';for(let i=1;i<=4;i++){document.querySelector('#short-progress-'+i).value=0;document.querySelector('#short-percent-'+i).textContent='0%';}
+ button.disabled=true;results.replaceChildren();status.textContent='Connecting to generator…';
+ const animation=generatorProgressAnimator();
  try{
-  const headers=await generatorHeaders();
-  const response=await fetch(GENERATOR_API+'/generate',{method:'POST',headers,body:payload});
+  const response=await fetch(GENERATOR_API+'/generate',{method:'POST',headers:await generatorHeaders(),body:payload});
   const started=await response.json();if(!response.ok)throw new Error(started.detail||'Generation failed');
-  let done=false;
-  for(let attempt=0;attempt<900;attempt++){
-   await new Promise(resolve=>setTimeout(resolve,2000));
+  let done=false,waitMs=1000;const deadline=Date.now()+LONG_POLL_LIMIT_MS;
+  while(Date.now()<deadline){
+   await new Promise(resolve=>setTimeout(resolve,waitMs));
    const poll=await fetch(GENERATOR_API+'/jobs/'+encodeURIComponent(started.job_id),{headers:await generatorHeaders()});
    if(!poll.ok)throw new Error('Cannot check generator status');
-   const job=await poll.json();status.textContent=job.progress; if(Array.isArray(job.percentages)){job.percentages.slice(0,4).forEach((raw,i)=>{const value=Math.max(0,Math.min(100,Number(raw)||0));document.querySelector('#short-progress-'+(i+1)).value=value;document.querySelector('#short-percent-'+(i+1)).textContent=value+'%';});}
-   if(job.status==='error')throw new Error(job.progress);
+   const job=await poll.json();status.textContent=processingStatus(job);
+   waitMs=job.status==='queued'?3000:1000;
+   if(job.stage_percentages){
+    for(const stage of GENERATOR_STAGES){animation.set('stage-'+stage,job.stage_percentages[stage]);}
+   }
+   if(Array.isArray(job.percentages)){
+    job.percentages.slice(0,4).forEach((value,i)=>animation.set('short-'+(i+1),value));
+   }
+   if(job.status==='error')throw new Error(job.progress||'Generation failed');
    if(job.status==='done'){
     for(let i=0;i<job.clips.length;i++){
-     const clip=job.clips[i], wrapper=document.createElement('div');
+     const clip=job.clips[i],wrapper=document.createElement('div');
      const title=document.createElement('strong');title.textContent='Short '+(i+1)+' · '+clip.duration+'s';
-     const fileResponse=await fetch(GENERATOR_API+clip.url,{headers:await generatorHeaders()});if(!fileResponse.ok)throw new Error('Could not download Short '+(i+1));const blobUrl=URL.createObjectURL(await fileResponse.blob());
-     const video=document.createElement('video');video.controls=true;video.preload='metadata';video.src=blobUrl;video.style.cssText='display:block;max-height:360px;width:100%;background:#000';
-     const link=document.createElement('a');link.href=blobUrl;link.download='clipstudio-short-'+(i+1)+'.mp4';link.textContent='Download MP4';link.target='_blank';
+     const fileResponse=await fetch(GENERATOR_API+clip.url,{headers:await generatorHeaders()});
+     if(!fileResponse.ok)throw new Error('Could not download Short '+(i+1));
+     const blobUrl=URL.createObjectURL(await fileResponse.blob());
+     const video=document.createElement('video');video.controls=true;video.preload='metadata';video.playsInline=true;video.src=blobUrl;
+     video.style.cssText='display:block;max-height:360px;width:100%;background:#000';
+     const link=document.createElement('a');link.href=blobUrl;link.download='clipstudio-short-'+(i+1)+'.mp4';
+     link.textContent='Download MP4';link.target='_blank';
      wrapper.append(title,video,link);results.append(wrapper);
     }
-    done=true;break;
+    status.textContent=gt('ready');done=true;break;
    }
   }
   if(!done)throw new Error('Timed out waiting for generator');
  }catch(err){status.textContent='Error: '+err.message;}
- finally{button.disabled=false;refreshQuota();}
+ finally{animation.finish();button.disabled=false;refreshQuota();}
 }
 
 async function exportClip(){const f=document.querySelector('#project-form');const file=state.selectedFile;if(!file)return flash('Choose a local video file first. YouTube URLs cannot be downloaded by this version.',true);const fd=new FormData(f),start=Number(fd.get('start')),end=Number(fd.get('end'));if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||start<0)return flash('Invalid time range.',true);const status=document.querySelector('#export-status');const button=document.querySelector('#export-video');button.disabled=true;status.textContent=t('working');try{if(!ffmpegInstance){ffmpegInstance=new FFmpeg();ffmpegInstance.on('log',({message})=>{if(status&&message.includes('time='))status.textContent=message.slice(-110);});const base='https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd';await ffmpegInstance.load({coreURL:await toBlobURL(`${base}/ffmpeg-core.js`,'text/javascript'),wasmURL:await toBlobURL(`${base}/ffmpeg-core.wasm`,'application/wasm')});}const input='input_'+Date.now()+'.'+(file.name.split('.').pop()||'mp4').replace(/[^a-z0-9]/gi,'');const output='clip_'+Date.now()+'.mp4';await ffmpegInstance.writeFile(input,await fetchFile(file));const code=await ffmpegInstance.exec(['-ss',String(start),'-i',input,'-t',String(end-start),'-vf','scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280','-r','25','-c:v','libx264','-preset','ultrafast','-crf','28','-c:a','aac','-b:a','128k','-movflags','+faststart',output]);if(code!==0)throw new Error('Video export failed. Try a shorter clip or another browser.');const bytes=await ffmpegInstance.readFile(output);const blob=new Blob([bytes],{type:'video/mp4'});const link=document.createElement('a');const blobUrl=URL.createObjectURL(blob);link.href=blobUrl;link.download=(String(fd.get('title')||'clip').replace(/[^\w-]/g,'_')||'clip')+'.mp4';link.click();setTimeout(()=>URL.revokeObjectURL(blobUrl),60000);await ffmpegInstance.deleteFile(input);await ffmpegInstance.deleteFile(output);if(state.editing){const {error}=await supabase.from('projects').update({status:'exported',updated_at:new Date().toISOString()}).eq('id',state.editing);if(!error)await logActivity('clip_exported',state.editing,link.download);}await loadData();status.textContent='✓ '+t('download');}catch(err){console.error(err);status.textContent=safeError(err);}finally{button.disabled=false;}}
