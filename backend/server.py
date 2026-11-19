@@ -1,4 +1,4 @@
-import os, re, json, uuid, shutil, subprocess, threading, time, secrets, hmac, traceback, zipfile
+import os, re, json, uuid, shutil, subprocess, threading, time, secrets, hmac, traceback, zipfile, asyncio
 from queue import Queue
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 from yt_dlp import YoutubeDL
 
 ROOT=Path(__file__).resolve().parent
@@ -39,9 +40,9 @@ MAX_DAILY=max(0,min(100,int(os.getenv('MAX_JOBS_PER_DAY','20'))))
 MAX_DOWNLOADS_DAILY=max(0,min(100,int(os.getenv('MAX_DOWNLOADS_PER_DAY','10'))))
 # Keep actual heavy processing bounded for a home PC; accept more people via queues.
 MAX_CONCURRENT_SHORTS=max(1,min(4,int(os.getenv('MAX_CONCURRENT_SHORTS','1'))))
-MAX_CONCURRENT_DOWNLOADS=max(1,min(6,int(os.getenv('MAX_CONCURRENT_DOWNLOADS','2'))))
-MAX_ACCEPTED_JOBS=max(4,min(200,int(os.getenv('MAX_ACCEPTED_JOBS','100'))))
-MAX_JOBS_PER_USER=max(1,min(5,int(os.getenv('MAX_JOBS_PER_USER','2'))))
+MAX_CONCURRENT_DOWNLOADS=max(1,min(6,int(os.getenv('MAX_CONCURRENT_DOWNLOADS','1'))))
+MAX_ACCEPTED_JOBS=max(4,min(1000,int(os.getenv('MAX_ACCEPTED_JOBS','1000'))))
+MAX_JOBS_PER_USER=max(1,min(5,int(os.getenv('MAX_JOBS_PER_USER','1'))))
 MAX_LOCAL_UPLOADS=max(1,min(4,int(os.getenv('MAX_LOCAL_UPLOADS','2'))))
 JOB_TTL=max(600,min(86400,int(os.getenv('JOB_TTL_SECONDS','3600'))))
 # Allow source videos up to five hours; keep a bounded download/upload size.
@@ -994,3 +995,131 @@ def media_file(job:str,token:str):
     if not path.is_file():
         raise HTTPException(404,'File not found')
     return FileResponse(path,media_type=('audio/mpeg' if path.suffix=='.mp3' else 'audio/wav' if path.suffix=='.wav' else 'video/mp4'),filename=data['filename'])
+
+# V13 caption studio: isolated upload, full-video timed transcription, styled burn-in.
+# A single CPU task at a time protects the Windows backend.
+caption_semaphore=threading.BoundedSemaphore(1)
+CAPTION_MAX_BYTES=250*1024*1024
+CAPTION_MAX_SECONDS=15*60
+
+async def caption_upload(file:UploadFile):
+    ext=Path(file.filename or '').suffix.lower()
+    if ext not in {'.mp4','.mov','.mkv','.webm'}:
+        raise HTTPException(400,'Upload MP4, MOV, MKV or WEBM')
+    folder=WORK/('captions_'+uuid.uuid4().hex)
+    folder.mkdir(parents=True,exist_ok=False)
+    source=folder/('source'+ext)
+    size=0
+    try:
+        with source.open('wb') as output:
+            while chunk:=await file.read(1024*1024):
+                size+=len(chunk)
+                if size>CAPTION_MAX_BYTES:
+                    raise HTTPException(413,'Caption editor supports files up to 250 MB')
+                output.write(chunk)
+        if size==0:raise HTTPException(400,'Empty video')
+        length=await asyncio.to_thread(duration,source)
+        if not 0<length<=CAPTION_MAX_SECONDS:
+            raise HTTPException(400,'Caption editor supports videos up to 15 minutes')
+        return folder,source,length
+    except Exception:
+        shutil.rmtree(folder,ignore_errors=True)
+        raise
+
+def caption_transcription(source,length):
+    if not caption_semaphore.acquire(blocking=False):
+        raise HTTPException(429,'Caption processing busy; try again shortly')
+    try:
+        folder=source.parent
+        audio=folder/'audio.wav'
+        run(['ffmpeg','-hide_banner','-loglevel','error','-y','-i',str(source),
+             '-vn','-ac','1','-ar','16000','-c:a','pcm_s16le',str(audio)])
+        model=get_whisper()
+        segments,_=model.transcribe(str(audio),word_timestamps=True,vad_filter=True,
+                                     beam_size=1,best_of=1,condition_on_previous_text=False)
+        cues=[]
+        for seg in segments:
+            for word in seg.words or []:
+                if word.start is not None and word.end is not None and word.end>word.start:
+                    cues.append({'start':round(float(word.start),2),'end':round(float(word.end),2),
+                                 'text':str(word.word).strip()[:200]})
+                    if len(cues)>=1500:break
+            if len(cues)>=1500:break
+        return cues
+    finally:
+        caption_semaphore.release()
+
+@app.post('/captions/transcribe')
+async def caption_transcribe_endpoint(file:UploadFile=File(...),uid:str=Depends(current_user)):
+    folder,source,length=await caption_upload(file)
+    try:
+        cues=await asyncio.to_thread(caption_transcription,source,length)
+        return {'cues':cues,'duration':round(length,2)}
+    finally:
+        shutil.rmtree(folder,ignore_errors=True)
+
+def ass_safe(text):
+    return ''.join(ch for ch in text if ch not in '{}\\\r\n' and ord(ch)>=32)[:200]
+
+def render_caption_file(source,cues,style):
+    if not caption_semaphore.acquire(blocking=False):
+        raise HTTPException(429,'Caption processing busy; try again shortly')
+    try:
+        folder=source.parent
+        color=style['color']
+        bgr='&H00'+color[5:7]+color[3:5]+color[1:3]
+        font={'Arial Black':'Arial','Arial':'Arial','Impact':'Impact','Georgia':'Georgia'}[style['font']]
+        alignment={'bottom':2,'center':5,'top':8}[style['position']]
+        border=3 if style['style']=='boxed' else 1
+        header=(
+          '[Script Info]\\nScriptType: v4.00+\\nPlayResX: 720\\nPlayResY: 1280\\nWrapStyle: 2\\n'
+          '[V4+ Styles]\\n'
+          'Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\\n'
+          f'Style: Caption,{font},{style["size"]},{bgr},&H00FFFFFF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,{border},3,1,{alignment},25,25,120,1\\n'
+          '[Events]\\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\\n'
+        )
+        events=[]
+        for cue in cues:
+            a=float(cue['start']);b=float(cue['end'])
+            if not (0<=a<b<=CAPTION_MAX_SECONDS):continue
+            txt=ass_safe(str(cue['text']))
+            if txt:events.append(f'Dialogue: 0,{ass_time(a)},{ass_time(b)},Caption,,0,0,0,,{txt}')
+        (folder/'captions.ass').write_text(header+'\\n'.join(events),encoding='utf-8-sig')
+        output=folder/'captioned.mp4'
+        # The source is scaled before subtitles, so 400px has real 400px ASS sizing.
+        vf='scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,subtitles=captions.ass'
+        run(['ffmpeg','-hide_banner','-loglevel','error','-y','-i',str(source),'-vf',vf,
+             '-c:v','libx264','-preset','veryfast','-crf','24','-c:a','aac','-b:a','128k',
+             '-movflags','+faststart',str(output)],cwd=folder)
+        return output
+    finally:
+        caption_semaphore.release()
+
+@app.post('/captions/render')
+async def caption_render_endpoint(file:UploadFile=File(...),cues:str=Form(...),
+                                 size:int=Form(40),font:str=Form('Arial'),
+                                 color:str=Form('#FFE34D'),position:str=Form('bottom'),
+                                 style:str=Form('clean'),uid:str=Depends(current_user)):
+    if not 18<=size<=400:raise HTTPException(400,'Caption size must be 18 to 400')
+    if font not in {'Arial Black','Arial','Impact','Georgia'}:raise HTTPException(400,'Invalid font')
+    if not re.fullmatch(r'#[0-9a-fA-F]{6}',color):raise HTTPException(400,'Invalid color')
+    if position not in {'top','center','bottom'} or style not in {'clean','boxed'}:
+        raise HTTPException(400,'Invalid caption style')
+    try: parsed=json.loads(cues)
+    except (ValueError,TypeError):raise HTTPException(400,'Invalid captions JSON')
+    if not isinstance(parsed,list) or not 0<len(parsed)<=1500 or any(
+        not isinstance(c,dict) or not isinstance(c.get('text'),str) or
+        len(c['text'])>200 or not isinstance(c.get('start'),(int,float)) or
+        not isinstance(c.get('end'),(int,float)) for c in parsed):
+        raise HTTPException(400,'Invalid timed captions')
+    folder,source,length=await caption_upload(file)
+    try:
+        if any(not (0<=c['start']<c['end']<=length+0.5) for c in parsed):
+            raise HTTPException(400,'Caption times exceed video duration')
+        output=await asyncio.to_thread(render_caption_file,source,parsed,
+                      {'size':size,'font':font,'color':color,'position':position,'style':style})
+        return FileResponse(output,media_type='video/mp4',filename='clipstudio_captioned.mp4',
+                            background=BackgroundTask(shutil.rmtree,folder,ignore_errors=True))
+    except Exception:
+        shutil.rmtree(folder,ignore_errors=True)
+        raise
