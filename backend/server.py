@@ -1,4 +1,4 @@
-import os, re, json, uuid, shutil, subprocess, threading, time, secrets, hmac, traceback, zipfile, asyncio
+import os, re, json, uuid, shutil, subprocess, threading, time, secrets, hmac, traceback, zipfile, asyncio, sqlite3, hashlib, bisect, random
 from queue import Queue
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
@@ -24,8 +24,21 @@ async def lifespan(application):
 
 app=FastAPI(title='ClipStudio generator API', docs_url=None, redoc_url=None,
             openapi_url=None, lifespan=lifespan)
-ORIGINS=[x.strip() for x in os.getenv('ALLOWED_ORIGINS','http://localhost:5173,http://127.0.0.1:5173').split(',') if x.strip()]
-app.add_middleware(CORSMiddleware,allow_origins=ORIGINS,allow_methods=['GET','POST'],allow_headers=['Authorization','Content-Type'])
+DEFAULT_ORIGINS = (
+    'https://clipstudio.ahlaouirayane79.workers.dev',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+)
+ORIGINS = list(dict.fromkeys([
+    *DEFAULT_ORIGINS,
+    *(origin.strip().rstrip('/') for origin in os.getenv('ALLOWED_ORIGINS', '').split(',') if origin.strip()),
+]))
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ORIGINS,
+    allow_methods=['GET', 'POST', 'OPTIONS'],
+    allow_headers=['Authorization', 'Content-Type'],
+)
 jobs={}
 lock=threading.Lock()
 # Count outstanding jobs per user (queued + running); do not exclude other users.
@@ -302,20 +315,39 @@ def duration(path):
 def ass_time(sec):
     cs=round(sec*100);return f'{cs//360000}:{(cs//6000)%60:02}:{(cs//100)%60:02}.{cs%100:02}'
 
-def captions(words, start, end, path, color='#FFE34D', size=40, font='Arial', position='bottom', style='clean', animation='pop'):
-    # ASS BGR hexadecimal; highlighted word on each spoken interval
-    bgr='&H00'+color[5:7]+color[3:5]+color[1:3]
-    alignment={'bottom':2,'center':5,'top':8}.get(position,2)
-    border=3 if style=='boxed' else 1
-    header='''[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\nWrapStyle: 2\n[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\nStyle: Pop,'''+font+''','''+str(size)+''','''+bgr+''',&H00FFFFFF,&H00101010,&H00000000,-1,0,0,0,100,100,0,0,1,'''+str(border)+''',1,'''+str(alignment)+''',30,30,150,1\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n'''
+def caption_style_defaults():
+    return {'font':'Arial Black','size':70,'color':'#FFE34D',
+            'position':'bottom','style':'clean','animation':'pop'}
+
+def ass_color(color):
+    return '&H00'+color[5:7]+color[3:5]+color[1:3]
+
+def captions(words, start, end, path, style=None):
+    style={**caption_style_defaults(),**(style or {})}
+    font={'Arial Black':'Arial Black','Arial':'Arial','Impact':'Impact',
+          'Georgia':'Georgia'}[style['font']]
+    alignment={'bottom':2,'center':5,'top':8}[style['position']]
+    margin=150 if alignment==2 else 85
+    # ASS BorderStyle 3 draws a solid word box; 1 draws outlined text.
+    border=3 if style['style']=='boxed' else 1
+    outline=0 if border==3 else 3
+    shadow=0 if border==3 else 1
+    header=(
+        '[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\nWrapStyle: 2\n'
+        '[V4+ Styles]\n'
+        'Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\n'
+        f'Style: Pop,{font},{style["size"]},{ass_color(style["color"])},&H00FFFFFF,&H00101010,&H90000000,-1,0,0,0,100,100,0,0,{border},{outline},{shadow},{alignment},30,30,{margin},1\n'
+        '[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n'
+    )
     events=[]
     for w in words:
         a=max(start,float(w['start']));b=min(end,float(w['end']))
         if b<=a:continue
-        txt=re.sub(r'[{}\\]','',str(w['word'])).strip()
+        txt=ass_safe(str(w['word'])).strip()
         if not txt:continue
-        # pop entrance: ASS scale animation for each word
-        events.append(f'Dialogue: 0,{ass_time(a-start)},{ass_time(b-start)},Pop,,0,0,0,,{txt}')
+        effect=(r'{\fscx120\fscy120\t(0,140,\fscx100\fscy100)}'
+                if style['animation']=='pop' else '')
+        events.append(f'Dialogue: 0,{ass_time(a-start)},{ass_time(b-start)},Pop,,0,0,0,,{effect}{txt}')
     path.write_text(header+'\n'.join(events),encoding='utf-8-sig')
 
 # Separate, measurable stages for the automatic Shorts generator.
@@ -432,7 +464,169 @@ def detect_face_center(video, start, length, job_id):
     except CancelledJob:raise
     except Exception:return None
 
-def generate(job,source,seconds,uid,is_upload=False,caption_config=None):
+def detect_facecam_region(video,start,length,job_id):
+    """Locate a persistent small corner facecam embedded in a source stream.
+
+    Only a stable face in a corner inset qualifies. Never fabricate a facecam.
+    """
+    if os.getenv('AUTO_FACECAM','1')!='1':return None
+    try:
+        import cv2
+        cascade=cv2.CascadeClassifier(cv2.data.haarcascades+'haarcascade_frontalface_default.xml')
+        if cascade.empty():return None
+        cap=cv2.VideoCapture(str(video))
+        if not cap.isOpened():return None
+        candidates=[]
+        try:
+            for k in range(9):
+                check_cancel(job_id)
+                cap.set(cv2.CAP_PROP_POS_MSEC,1000*(start+length*(k+0.5)/9))
+                ok,frame=cap.read()
+                if not ok:continue
+                h,w=frame.shape[:2]
+                ratio=min(1.0,640/max(1,w))
+                small=cv2.resize(frame,(max(1,int(w*ratio)),max(1,int(h*ratio))))
+                gray=cv2.cvtColor(small,cv2.COLOR_BGR2GRAY)
+                faces=cascade.detectMultiScale(gray,scaleFactor=1.12,minNeighbors=5,minSize=(24,24))
+                for x,y,fw,fh in faces:
+                    cx=(x+fw/2)/small.shape[1];cy=(y+fh/2)/small.shape[0]
+                    # Corner facecams are typically small in the original frame.
+                    if fw/small.shape[1]>0.22 or fh/small.shape[0]>0.40:continue
+                    if not (cx<0.32 or cx>0.68):continue
+                    if not (cy<0.38 or cy>0.62):continue
+                    candidates.append((cx,cy,fw/small.shape[1],fh/small.shape[0]))
+        finally:cap.release()
+        if len(candidates)<4:return None
+        groups={}
+        for cx,cy,fw,fh in candidates:
+            key=('left' if cx<0.5 else 'right','top' if cy<0.5 else 'bottom')
+            groups.setdefault(key,[]).append((cx,cy,fw,fh))
+        group=max(groups.values(),key=len)
+        if len(group)<4:return None
+        def median(values):
+            ordered=sorted(values);return ordered[len(ordered)//2]
+        cx,cy,fw,fh=(median([item[i] for item in group]) for i in range(4))
+        # Enlarge face bounding box to include the streamer's head and shoulders.
+        rw=max(0.20,min(0.40,fw*2.7))
+        rh=max(0.24,min(0.65,fh*3.0))
+        x=max(0,min(1-rw,cx-rw/2))
+        y=max(0,min(1-rh,cy-rh*0.42))
+        return (x,y,rw,rh)
+    except CancelledJob:raise
+    except Exception:return None
+
+def shorts_video_filter(region, subtitle_name=None, face_center=None):
+    """Create portrait video; if a corner facecam exists, place it above gameplay."""
+    if region:
+        x,y,w,h=region
+        # crop parameters are calculated on original video dimensions.
+        filtergraph=(
+            f'[0:v]split=2[game][cam];'
+            f'[game]scale=720:1280:force_original_aspect_ratio=increase,'
+            f'crop=720:1280,setsar=1[gameplay];'
+            f'[cam]crop=w=iw*{w:.6f}:h=ih*{h:.6f}:'
+            f'x=iw*{x:.6f}:y=ih*{y:.6f},'
+            f'scale=720:500:force_original_aspect_ratio=increase,'
+            f'crop=720:500,setsar=1[face];'
+            f'[gameplay][face]overlay=0:0:shortest=1[layout]'
+        )
+    else:
+        crop_x='(in_w-out_w)/2' if face_center is None else f'max(0,min(in_w-out_w,in_w*{face_center:.5f}-out_w/2))'
+        filtergraph=(f'[0:v]scale=720:1280:force_original_aspect_ratio=increase,'
+                     f'crop=720:1280:{crop_x}:0,setsar=1[layout]')
+    if subtitle_name:
+        filtergraph+=f';[layout]ass={subtitle_name}[vout]'
+    else:
+        filtergraph+=';[layout]null[vout]'
+    return filtergraph
+
+# Shared, persistent history for ALL users, including uploaded files and YouTube URLs.
+# The database stays in backend/work and survives server restarts.
+SELECTION_DB = WORK / 'shorts_selection_history.sqlite3'
+selection_mutex = threading.RLock()
+
+def video_fingerprint(video, job_id):
+    digest = hashlib.sha256()
+    with Path(video).open('rb') as stream:
+        while True:
+            check_cancel(job_id)
+            block = stream.read(4 * 1024 * 1024)
+            if not block:
+                break
+            digest.update(block)
+    return digest.hexdigest()
+
+def selection_connection():
+    db = sqlite3.connect(str(SELECTION_DB), timeout=60)
+    db.execute('PRAGMA busy_timeout=60000')
+    db.execute('CREATE TABLE IF NOT EXISTS selected_windows ('
+               'video_hash TEXT NOT NULL, start REAL NOT NULL, length REAL NOT NULL, '
+               'job_id TEXT NOT NULL, created REAL NOT NULL)')
+    db.execute('CREATE INDEX IF NOT EXISTS ix_selected_video ON selected_windows(video_hash)')
+    return db
+
+def forget_failed_selection(job_id):
+    with selection_mutex:
+        with selection_connection() as db:
+            db.execute('DELETE FROM selected_windows WHERE job_id=?', (job_id,))
+
+def select_diverse_windows(video_hash, words, total, clip_len, job_id):
+    """Choose speech-rich, non-overlapping windows, avoiding ALL previous jobs.
+
+    If a source has no more room for eight unseen clips, select the least-reused
+    alternatives. Unique clips cannot be guaranteed for short source videos.
+    """
+    rng = random.SystemRandom()
+    max_start = max(0.0, total - clip_len)
+    step = max(0.75, max_start / 1800.0)
+    count = max(1, int(max_start / step) + 1)
+    candidates = [min(max_start, k * step) for k in range(count)]
+    if max_start > 0 and (not candidates or candidates[-1] < max_start - 0.01):
+        candidates.append(max_start)
+    word_starts = sorted(float(w['start']) for w in words)
+    def speech_count(start):
+        return bisect.bisect_left(word_starts, start + clip_len) - bisect.bisect_left(word_starts, start)
+    def overlap(a, b):
+        return max(0.0, min(a + clip_len, b + clip_len) - max(a, b)) / max(clip_len, 0.001)
+    with selection_mutex:
+        with selection_connection() as db:
+            # BEGIN IMMEDIATE serializes simultaneous jobs, even across accounts.
+            db.execute('BEGIN IMMEDIATE')
+            history = [float(row[0]) for row in db.execute(
+                'SELECT start FROM selected_windows WHERE video_hash=?', (video_hash,))]
+            chosen = []
+            for idx in range(SHORTS_COUNT):
+                check_cancel(job_id)
+                # Avoid overlap inside this batch. Relax only if mathematically necessary.
+                available = [s for s in candidates if all(overlap(s, c) < 0.015 for c in chosen)]
+                if not available:
+                    available = [s for s in candidates if all(abs(s-c) > 0.2 for c in chosen)]
+                if not available:
+                    available = candidates
+                # First prioritize fully unseen areas. If exhausted, prefer minimal
+                # historical overlap and varied positions rather than repeating starts.
+                novelty = [(s, sum(overlap(s, h) for h in history)) for s in available]
+                untouched = [s for s, penalty in novelty if penalty < 0.015]
+                if untouched:
+                    pool = untouched
+                else:
+                    best = min(penalty for _, penalty in novelty)
+                    pool = [s for s, penalty in novelty if penalty <= best + 0.15]
+                speech = [(s, speech_count(s)) for s in pool]
+                best_speech = max(v for _, v in speech)
+                # Randomize among near-best speech segments; do not always take
+                # the first timestamp on equal transcription scores.
+                threshold = max(0, best_speech - max(2, int(best_speech * 0.18)))
+                shortlist = [s for s, v in speech if v >= threshold]
+                selected = rng.choice(shortlist)
+                chosen.append(selected)
+                set_stage_percentage(job_id, 'selection', min(99, round(100*(idx+1)/SHORTS_COUNT)))
+            for selected in chosen:
+                db.execute('INSERT INTO selected_windows(video_hash,start,length,job_id,created) '
+                           'VALUES (?,?,?,?,?)', (video_hash, selected, clip_len, job_id, time.time()))
+            return sorted(chosen), len(history)
+
+def generate(job,source,seconds,uid,is_upload=False,caption_style=None):
     folder=WORK/job;folder.mkdir(exist_ok=True)
     try:
         check_cancel(job)
@@ -475,33 +669,25 @@ def generate(job,source,seconds,uid,is_upload=False,caption_config=None):
 
         jobs[job].update(status='selecting',stage='selection',progress='Selecting eight speech-rich windows')
         clip_len=min(seconds,max(3,total/SHORTS_COUNT-0.5))
-        starts=[i*max(1,(total-clip_len)/24) for i in range(25)]
-        ranked=sorted(starts,key=lambda s:sum(1 for w in words if s<=w['start']<s+clip_len),reverse=True)
-        chosen=[]
-        for index,s in enumerate(ranked):
-            if all(abs(s-other)>=clip_len for other in chosen):chosen.append(s)
-            set_stage_percentage(job,'selection',min(99,int(100*(index+1)/len(ranked))))
-            if len(chosen)==SHORTS_COUNT:break
-        if len(chosen)<SHORTS_COUNT:
-            chosen=[i*(total-clip_len)/(SHORTS_COUNT-1) for i in range(SHORTS_COUNT)]
-        chosen.sort()
+        fingerprint = video_fingerprint(video, job)
+        chosen, previous_windows = select_diverse_windows(fingerprint, words, total, clip_len, job)
+        jobs[job]['previous_windows_on_source'] = previous_windows
         set_stage_percentage(job,'selection',100)
 
         outputs=[]
         for i,start in enumerate(chosen,1):
             check_cancel(job)
             jobs[job].update(status='rendering',stage='render',progress=f'Rendering clip {i}/{SHORTS_COUNT}')
-            subtitle=folder/f'clip{i}.ass';captions(words,start,start+clip_len,subtitle,**(caption_config or {}))
+            subtitle=folder/f'clip{i}.ass';captions(words,start,start+clip_len,subtitle,caption_style)
             output=folder/f'clip{i}.mp4'
-            face_center=detect_face_center(video,start,clip_len,job)
-            # The crop follows the dominant face position estimated over nine samples.
-            # FFmpeg clamps the crop if the subject is close to the edge.
-            crop_x='(in_w-out_w)/2' if face_center is None else f'max(0,min(in_w-out_w,in_w*{face_center:.5f}-out_w/2))'
-            vf=f'scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280:{crop_x}:0,ass=clip{i}.ass'
+            region=detect_facecam_region(video,start,clip_len,job)
+            face_center=None if region else detect_face_center(video,start,clip_len,job)
+            vf=shorts_video_filter(region,subtitle.name,face_center)
             cmd=['ffmpeg','-hide_banner','-loglevel','error','-nostats',
                  '-progress','pipe:1','-y','-ss',str(start),'-i',str(video),'-t',str(clip_len),
-                 '-vf',vf,'-r','25','-c:v','libx264','-preset','veryfast','-crf','25',
-                 '-c:a','aac','-b:a','128k',str(output)]
+                 '-filter_complex',vf,'-map','[vout]','-map','0:a:0?',
+                 '-r','25','-c:v','libx264','-preset','veryfast','-crf','25',
+                 '-pix_fmt','yuv420p','-c:a','aac','-b:a','128k',str(output)]
             def on_render_line(line):
                 key,sep,value=line.strip().partition('=')
                 if sep and key in ('out_time_us','out_time_ms','out_time'):
@@ -514,24 +700,31 @@ def generate(job,source,seconds,uid,is_upload=False,caption_config=None):
             ffmpeg_with_cancel(cmd,job,cwd=str(folder),on_line=on_render_line)
             if not output.is_file() or output.stat().st_size==0:
                 raise RuntimeError(f'Short {i} did not produce an MP4 file')
-            # Keep an uncaptioned version for later text editing; the standard clip remains captioned.
-            clean=folder/f'clip{i}.clean.mp4'
-            clean_cmd=['ffmpeg','-hide_banner','-loglevel','error','-y','-ss',str(start),'-i',str(video),'-t',str(clip_len),
-                       '-vf',f'scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280:{crop_x}:0',
-                       '-r','25','-c:v','libx264','-preset','veryfast','-crf','25','-c:a','aac','-b:a','128k',str(clean)]
+            # Keep a clean copy for the existing "Edit in Video Editor" button.
+            clean_output=folder/f'clip{i}.clean.mp4'
+            clean_cmd=['ffmpeg','-hide_banner','-loglevel','error','-y',
+                       '-ss',str(start),'-i',str(video),'-t',str(clip_len),
+                       '-filter_complex',shorts_video_filter(region,None,face_center),
+                       '-map','[vout]','-map','0:a:0?',
+                       '-r','25','-c:v','libx264','-preset','veryfast','-crf','26',
+                       '-pix_fmt','yuv420p','-c:a','aac','-b:a','128k',str(clean_output)]
             ffmpeg_with_cancel(clean_cmd,job,cwd=str(folder))
-            cue_data=[{'start':round(max(0,float(w['start'])-start),2),'end':round(min(clip_len,float(w['end'])-start),2),
-                       'text':str(w['word']).strip()[:200]} for w in words if start<=float(w['start'])<start+clip_len and float(w['end'])>float(w['start'])]
-            cue_data=[c for c in cue_data if c['end']>c['start']]
             set_clip_percentage(job,i-1,100)
-            outputs.append({'cues':cue_data,'clean_url':f'/files/{job}/clip{i}.clean.mp4','url':f'/files/{job}/clip{i}.mp4',
-                            'start':round(start,1),'duration':round(clip_len,1), 'face_tracking':face_center is not None, 'speech_score':round(min(100,100*sum(1 for w in words if start<=w['start']<start+clip_len)/max(1,clip_len*2)),1)})
+            clip_cues=[{'start':round(max(0,float(w['start'])-start),2),
+                        'end':round(min(clip_len,float(w['end'])-start),2),
+                        'text':ass_safe(str(w['word'])).strip()}
+                       for w in words if float(w['end'])>start and float(w['start'])<start+clip_len]
+            clip_cues=[c for c in clip_cues if c['end']>c['start'] and c['text']]
+            outputs.append({'url':f'/files/{job}/clip{i}.mp4',
+                            'start':round(start,1),'duration':round(clip_len,1), 'face_tracking':face_center is not None, 'facecam_layout':region is not None, 'cues':clip_cues, 'speech_score':round(min(100,100*sum(1 for w in words if start<=w['start']<start+clip_len)/max(1,clip_len*2)),1)})
         set_stage_percentage(job,'render',100)
         jobs[job].update(status='done',progress='Finished',clips=outputs,finished_at=time.time())
     except CancelledJob:
+        forget_failed_selection(job)
         cancelled_job(job,uid,'shorts',is_upload)
         return
     except Exception as e:
+        forget_failed_selection(job)
         if jobs.get(job,{}).get('cancel_requested'):
             cancelled_job(job,uid,'shorts',is_upload)
             return
@@ -567,12 +760,26 @@ def validate_youtube_link(raw: str) -> str:
     return value
 
 @app.post('/generate')
-async def start(url:str=Form(''),file:UploadFile|None=File(None),seconds:int=Form(30),caption_font:str=Form('Arial'),caption_size:int=Form(40),caption_color:str=Form('#FFE34D'),caption_position:str=Form('bottom'),caption_style:str=Form('clean'),caption_animation:str=Form('pop'),uid:str=Depends(current_user)):
+async def start(url:str=Form(''),file:UploadFile|None=File(None),seconds:int=Form(30),
+                caption_font:str=Form('Arial Black'),caption_size:int=Form(70),
+                caption_color:str=Form('#FFE34D'),caption_position:str=Form('bottom'),
+                caption_style:str=Form('clean'),caption_animation:str=Form('pop'),
+                uid:str=Depends(current_user)):
     if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):raise HTTPException(400,'FFmpeg/ffprobe not found in PATH')
     if not file and not url:raise HTTPException(400,'Provide YouTube URL or local file')
     if seconds not in (15,30,45,60):raise HTTPException(400,'Invalid clip duration')
-    if caption_font not in {'Arial Black','Arial','Impact','Georgia'} or not 18<=caption_size<=400 or not re.fullmatch(r'#[0-9a-fA-F]{6}',caption_color) or caption_position not in {'top','center','bottom'} or caption_style not in {'clean','boxed'} or caption_animation not in {'none','pop'}:raise HTTPException(400,'Invalid caption settings')
-    caption_config={'font':caption_font,'size':caption_size,'color':caption_color,'position':caption_position,'style':caption_style,'animation':caption_animation}
+    if caption_font not in {'Arial Black','Arial','Impact','Georgia'}:
+        raise HTTPException(400,'Invalid caption font')
+    if not 18<=caption_size<=400:
+        raise HTTPException(400,'Invalid caption size')
+    if not re.fullmatch(r'#[0-9a-fA-F]{6}',caption_color):
+        raise HTTPException(400,'Invalid caption color')
+    if caption_position not in {'top','center','bottom'} or caption_style not in {'clean','boxed'}:
+        raise HTTPException(400,'Invalid caption position or style')
+    if caption_animation not in {'pop','none'}:
+        raise HTTPException(400,'Invalid caption animation')
+    caption_config={'font':caption_font,'size':caption_size,'color':caption_color,
+                    'position':caption_position,'style':caption_style,'animation':caption_animation}
     source_url = validate_youtube_link(url) if not file else ''
     cleanup()
     reserved_day=reserve_work(uid,'shorts',is_upload=bool(file))
@@ -660,12 +867,22 @@ def download_all_shorts(job:str,uid:str=Depends(current_user)):
             for path in paths:z.write(path,arcname=path.name)
     return FileResponse(archive,media_type='application/zip',filename='clipstudio-shorts.zip')
 
+@app.get('/files/{job}/clip{index}.clean.mp4')
+def download_clean_short(job:str,index:int,uid:str=Depends(current_user)):
+    cleanup()
+    data=jobs.get(job)
+    if not data or data.get('owner')!=uid or data.get('status')!='done' or not 1<=index<=SHORTS_COUNT:
+        raise HTTPException(404,'File not found')
+    path=WORK/job/f'clip{index}.clean.mp4'
+    if not path.is_file():raise HTTPException(404,'Clean short not available')
+    return FileResponse(path,media_type='video/mp4',filename=f'clip{index}.mp4')
+
 @app.get('/files/{job}/{filename}')
 def download(job:str,filename:str,uid:str=Depends(current_user)):
     cleanup()
     data=jobs.get(job)
     if not data or data['owner']!=uid:raise HTTPException(404,'File not found')
-    if not re.fullmatch(r'clip[1-8](?:\.clean)?\.mp4',filename):raise HTTPException(404,'File not found')
+    if not re.fullmatch(r'clip[1-8]\.mp4',filename):raise HTTPException(404,'File not found')
     path=WORK/job/filename
     if data['status']!='done' or not path.is_file():raise HTTPException(404,'File not ready')
     return FileResponse(path,media_type='video/mp4',filename=filename)
