@@ -487,3 +487,21 @@ fieldset legend{font-weight:800;color:var(--text)}
 [dir="rtl"] .studio-sidebar-v23 .studio-nav-item{text-align:right}.studio-nav-arrow{margin-left:auto}[dir="rtl"] .studio-nav-text{align-items:flex-start}[dir="rtl"] .studio-sidebar-v23 .studio-nav-item:hover{transform:none}
 @media(prefers-reduced-motion:reduce){.studio-sidebar-v23 .studio-nav-item,.studio-nav-arrow{transition:none!important}}
 @media(max-width:1000px){.sidebar.studio-sidebar-v23,.sidebar.studio-sidebar-v23.menu-open{display:flex!important;flex-direction:column!important;align-items:stretch!important}.studio-sidebar-v23 .sidebar-logo,.studio-sidebar-v23 .studio-sidebar-intro,.studio-sidebar-v23 .studio-sidebar-nav,.studio-sidebar-v23 .studio-sidebar-promo,.studio-sidebar-v23 .sidebar-bottom{width:100%}}
+
+
+/* V24 — Creator workspace: hide/show navigation without losing editor state. */
+.studio-sidebar-v23 .studio-collapse-btn{display:none}
+.studio-header-toggle svg{width:19px;height:19px;display:block;flex:none}
+.studio-header-toggle{align-items:center;justify-content:center;gap:0;padding:9px!important;line-height:1}
+@media(min-width:1181px){
+ .app-layout:has(.studio-sidebar-v23){transition:grid-template-columns .22s ease}
+ .app-layout.sidebar-collapsed:has(.studio-sidebar-v23){grid-template-columns:minmax(0,1fr)!important}
+ .app-layout.sidebar-collapsed .studio-sidebar-v23{display:none!important}
+ .app-layout:has(.studio-sidebar-v23) #menu-toggle{display:inline-flex!important;align-items:center;justify-content:center;min-width:42px;height:42px}
+ .studio-sidebar-v23 .sidebar-logo{display:flex!important;align-items:center;justify-content:space-between;gap:7px}
+ .studio-sidebar-v23 .studio-collapse-btn{display:inline-flex;align-items:center;justify-content:center;flex:none;width:36px;height:36px;color:var(--muted);border:1px solid var(--line);background:var(--panel);border-radius:11px;cursor:pointer;transition:border-color .15s,color .15s,background .15s}
+ .studio-sidebar-v23 .studio-collapse-btn:hover,.studio-sidebar-v23 .studio-collapse-btn:focus-visible{color:var(--text);border-color:var(--pink);background:var(--surface)}
+ .studio-sidebar-v23 .studio-collapse-btn svg{width:18px;height:18px}
+}
+@media(max-width:1180px){.studio-sidebar-v23 .studio-collapse-btn{display:none!important}}
+@media(prefers-reduced-motion:reduce){.app-layout:has(.studio-sidebar-v23){transition:none!important}}
