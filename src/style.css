@@ -489,19 +489,64 @@ fieldset legend{font-weight:800;color:var(--text)}
 @media(max-width:1000px){.sidebar.studio-sidebar-v23,.sidebar.studio-sidebar-v23.menu-open{display:flex!important;flex-direction:column!important;align-items:stretch!important}.studio-sidebar-v23 .sidebar-logo,.studio-sidebar-v23 .studio-sidebar-intro,.studio-sidebar-v23 .studio-sidebar-nav,.studio-sidebar-v23 .studio-sidebar-promo,.studio-sidebar-v23 .sidebar-bottom{width:100%}}
 
 
-/* V24 — Creator workspace: hide/show navigation without losing editor state. */
-.studio-sidebar-v23 .studio-collapse-btn{display:none}
-.studio-header-toggle svg{width:19px;height:19px;display:block;flex:none}
-.studio-header-toggle{align-items:center;justify-content:center;gap:0;padding:9px!important;line-height:1}
-@media(min-width:1181px){
- .app-layout:has(.studio-sidebar-v23){transition:grid-template-columns .22s ease}
- .app-layout.sidebar-collapsed:has(.studio-sidebar-v23){grid-template-columns:minmax(0,1fr)!important}
- .app-layout.sidebar-collapsed .studio-sidebar-v23{display:none!important}
- .app-layout:has(.studio-sidebar-v23) #menu-toggle{display:inline-flex!important;align-items:center;justify-content:center;min-width:42px;height:42px}
- .studio-sidebar-v23 .sidebar-logo{display:flex!important;align-items:center;justify-content:space-between;gap:7px}
- .studio-sidebar-v23 .studio-collapse-btn{display:inline-flex;align-items:center;justify-content:center;flex:none;width:36px;height:36px;color:var(--muted);border:1px solid var(--line);background:var(--panel);border-radius:11px;cursor:pointer;transition:border-color .15s,color .15s,background .15s}
- .studio-sidebar-v23 .studio-collapse-btn:hover,.studio-sidebar-v23 .studio-collapse-btn:focus-visible{color:var(--text);border-color:var(--pink);background:var(--surface)}
- .studio-sidebar-v23 .studio-collapse-btn svg{width:18px;height:18px}
+
+/* V25 — the ONLY workspace toggle lives permanently beside ClipStudio FREE.
+   Page masthead is separate from the collapsible sidebar navigation. */
+.studio-shell-v25 .studio-shell-top{
+  grid-column:1/-1;grid-row:1;position:sticky;top:0;z-index:1301;
+  height:74px;min-height:74px;display:flex;align-items:center;justify-content:flex-start;
+  gap:12px;padding:0 22px;
+  background:linear-gradient(95deg,color-mix(in srgb,var(--surface) 96%,var(--pink)),var(--surface));
+  border-bottom:1px solid var(--line);
+  box-shadow:0 5px 20px rgba(0,0,0,.075);
 }
-@media(max-width:1180px){.studio-sidebar-v23 .studio-collapse-btn{display:none!important}}
-@media(prefers-reduced-motion:reduce){.app-layout:has(.studio-sidebar-v23){transition:none!important}}
+.studio-shell-v25 .studio-fixed-brand{display:flex;align-items:center;min-width:0}
+.studio-shell-v25 .studio-fixed-brand .logo{display:flex;align-items:center;gap:7px;white-space:nowrap;font-size:21px}
+.studio-shell-v25 .studio-fixed-brand .logo-icon{width:36px;height:36px;flex:none;object-fit:contain}
+.studio-shell-v25 .studio-fixed-brand .logo small{flex:none;font-size:9px}
+.studio-shell-v25 .studio-collapse-btn{
+ display:inline-flex!important;align-items:center;justify-content:center;flex:none;
+ margin-left:3px;width:41px;height:41px;padding:0;
+ border:1px solid color-mix(in srgb,var(--line) 88%,var(--pink));border-radius:12px;
+ background:linear-gradient(140deg,color-mix(in srgb,var(--surface) 86%,var(--pink)),var(--panel));
+ color:var(--text);cursor:pointer;transition:background .18s,border-color .18s;
+}
+.studio-shell-v25 .studio-collapse-btn:hover,
+.studio-shell-v25 .studio-collapse-btn:focus-visible{border-color:var(--pink);background:color-mix(in srgb,var(--surface) 80%,var(--pink))}
+.studio-shell-v25 .studio-collapse-btn svg{display:block;width:21px;height:21px}
+.studio-shell-v25 .workspace-head .workspace-title-row{gap:0}
+/* Override the older versions' separate right-side hamburger. */
+.studio-shell-v25 #menu-toggle,.studio-shell-v25 #menu-close{display:none!important}
+@media(min-width:1181px){
+ .app-layout.studio-shell-v25{display:grid!important;grid-template-columns:280px minmax(0,1fr)!important;grid-template-rows:74px minmax(0,1fr);min-height:100vh;align-items:stretch}
+ .app-layout.studio-shell-v25 .studio-sidebar-v23{
+  grid-column:1;grid-row:2;position:sticky!important;top:74px!important;
+  width:280px!important;height:calc(100dvh - 74px)!important;
+  min-height:0;max-height:calc(100dvh - 74px)!important;
+  transform:none!important;display:flex!important;align-self:start;
+  overflow-y:auto!important;padding:18px 13px 24px!important;
+ }
+ .app-layout.studio-shell-v25 .app-main{grid-column:2;grid-row:2;min-width:0}
+ .app-layout.studio-shell-v25.sidebar-collapsed{grid-template-columns:0px minmax(0,1fr)!important}
+ .app-layout.studio-shell-v25.sidebar-collapsed .studio-sidebar-v23{display:none!important}
+ .app-layout.studio-shell-v25.sidebar-collapsed .app-main{grid-column:2}
+}
+@media(max-width:1180px){
+ .app-layout.studio-shell-v25{display:block!important}
+ .studio-shell-v25 .studio-shell-top{height:68px;min-height:68px;padding:0 clamp(10px,3vw,22px)}
+ .studio-shell-v25 .studio-sidebar-v23{
+  position:fixed!important;top:68px!important;bottom:0!important;left:0;
+  height:calc(100dvh - 68px)!important;max-height:calc(100dvh - 68px)!important;
+  z-index:1250!important;overflow-y:auto!important;
+ }
+ .studio-shell-v25 .menu-backdrop.show{display:block!important;position:fixed;inset:68px 0 0!important;z-index:1240!important;background:rgba(0,0,0,.68)}
+ .studio-shell-v25 .app-main{min-width:0;max-width:100%;width:100%;margin:0}
+ [dir="rtl"] .studio-shell-v25 .studio-sidebar-v23{left:auto!important;right:0!important}
+}
+@media(max-width:460px){
+ .studio-shell-v25 .studio-fixed-brand .logo{font-size:17px;gap:5px}
+ .studio-shell-v25 .studio-fixed-brand .logo-icon{height:31px;width:31px}
+ .studio-shell-v25 .studio-collapse-btn{width:38px;height:38px}
+ .studio-shell-v25 .studio-shell-top{gap:6px}
+}
+@media(prefers-reduced-motion:reduce){.studio-shell-v25 .studio-collapse-btn{transition:none!important}}
