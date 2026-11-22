@@ -550,3 +550,54 @@ fieldset legend{font-weight:800;color:var(--text)}
  .studio-shell-v25 .studio-shell-top{gap:6px}
 }
 @media(prefers-reduced-motion:reduce){.studio-shell-v25 .studio-collapse-btn{transition:none!important}}
+
+
+/* V26 - top workspace advertising reservation.
+   Placeholder only: no Google ad-unit code or ad request until approved/consent configured.
+   The brand and ONE sidebar toggle remain intact (V25). */
+.studio-shell-v25 .studio-shell-top .studio-top-ad{
+  margin-inline:auto 0;
+  flex:1 1 370px;
+  min-width:0;
+  max-width:850px;
+  height:52px;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  gap:12px;
+  padding:7px 16px;
+  border:1px dashed color-mix(in srgb,var(--line) 70%,var(--pink));
+  background:linear-gradient(105deg,color-mix(in srgb,var(--surface) 97%,var(--orange)),color-mix(in srgb,var(--panel) 96%,var(--pink)));
+  color:var(--muted);
+  border-radius:13px;
+  text-align:center;
+  font:600 12px 'DM Sans',Arial,sans-serif;
+  letter-spacing:.01em;
+  overflow:hidden;
+  user-select:none;
+}
+.studio-shell-v25 .studio-top-ad-tag{
+  flex:none;
+  font:800 9px 'DM Sans',Arial,sans-serif;
+  letter-spacing:.08em;
+  background:color-mix(in srgb,var(--panel) 76%,var(--orange));
+  color:var(--text);
+  border:1px solid var(--line);
+  padding:5px 7px;
+  border-radius:7px;
+}
+.studio-shell-v25 .studio-top-ad-copy{display:flex;flex-direction:column;gap:2px;min-width:0;line-height:1.25}
+.studio-shell-v25 .studio-top-ad-copy small{font-size:10px;font-weight:400;color:var(--muted);opacity:.74}
+@media(max-width:900px){
+ .studio-shell-v25 .studio-shell-top .studio-top-ad{height:46px;padding:5px 8px;gap:7px}
+ .studio-shell-v25 .studio-top-ad-copy small{display:none}
+}
+@media(max-width:600px){
+ .studio-shell-v25 .studio-shell-top .studio-top-ad{flex:1 1 auto;min-width:0;height:40px;padding:3px 6px;border-radius:9px}
+ .studio-shell-v25 .studio-top-ad-copy{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .studio-shell-v25 .studio-top-ad-tag{font-size:8px;padding:4px}
+}
+@media(max-width:390px){
+ .studio-shell-v25 .studio-shell-top .studio-top-ad{flex:1 1 24px;gap:0}
+ .studio-shell-v25 .studio-top-ad-copy{display:none}
+}
