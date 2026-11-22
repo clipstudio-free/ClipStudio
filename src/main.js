@@ -40,7 +40,7 @@ const AUTH_PATHS={login:'/login',signup:'/signup',reset:'/forgot-password',updat
 const PRIVATE_PAGES=new Set(['dashboard','editor','newclip','downloads','library','history','analytics','toolbox','settings']);
 function pathForPage(page){return page==='auth'?(AUTH_PATHS[state.authMode]||AUTH_PATHS.login):(PAGE_PATHS[page]||'/');}
 function routeFromPath(path){const clean=path.replace(/\/+$/,'')||'/';for(const [mode,url] of Object.entries(AUTH_PATHS))if(url===clean)return {page:'auth',authMode:mode};for(const [page,url] of Object.entries(PAGE_PATHS))if(url===clean)return {page};return {page:'home'};}
-function navigate(page,{replace=false}={}){const url=pathForPage(page);if(location.pathname!==url){history[replace?'replaceState':'pushState']({},'',url);}state.menuOpen=false;state.page=page;state.notice='';render();window.scrollTo(0,0);}
+function navigate(page,{replace=false}={}){const url=pathForPage(page);if(location.pathname!==url){window.history[replace?'replaceState':'pushState']({},'',url);}state.menuOpen=false;state.page=page;state.notice='';render();window.scrollTo(0,0);}
 function setPage(page){navigate(page);}
 function applyBrowserRoute(){const route=routeFromPath(location.pathname);if(route.authMode)state.authMode=route.authMode;state.page=PRIVATE_PAGES.has(route.page)&&!state.user?'auth':route.page;if(state.page==='auth'&&!route.authMode)state.authMode='login';state.menuOpen=false;render();window.scrollTo(0,0);}
 window.addEventListener('popstate',applyBrowserRoute);
