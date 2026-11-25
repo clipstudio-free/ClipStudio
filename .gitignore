@@ -9,3 +9,7 @@ backend/__pycache__/
 backend/.env*
 !backend/.env.production.example
 *.pyc
+
+# Local launch secrets
+.tunnel_token.local
+backend/.venv/

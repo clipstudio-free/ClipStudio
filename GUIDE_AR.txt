@@ -1,0 +1,45 @@
+CLIPSTUDIO - RECUPERATION COMPLETE ET LANCEMENT 1 CLIC
+======================================================
+
+هاد الحزمة كتجمع كود Backend/Generator من النسخة الكاملة V21 لي كانت متاحة،
+وكود واجهة V26. هي نسخة محلية للاسترجاع وليست نسخة GitHub حديثة متحقّق منها 100%.
+لا ترفع الحزمة كاملة على GitHub! خصّوصاً ملفات .env.local.
+
+1) دير Extract All للملف ZIP، وحط المجلد ClipStudio_RECUPERATION_1_CLIC فبلاصة ثابتة (مثلا Documents).
+2) ضغط على 04_VERIFIER_PRE_REQUIS.bat باش تعرف واش عندك Python 3.12 وNode.js وFFmpeg وcloudflared.
+   إلا ناقص برنامج، نزّلو من الرابط اللي كيبان فنافذة الفحص.
+3) ضغط مرة وحدة على 00_CONFIGURER_UNE_FOIS.bat.
+   غادي يطلب منك Supabase Project URL و publishable/anon key، ماشي secret/service_role key.
+   كيسجّلهم محلياً فقط، وكيصايب جوج اختصارات فسطح المكتب تلقائياً.
+4) ضغط دبل كليك على ClipStudio - LOCAL فسطح المكتب.
+   كيتفتحو جوج نوافذ PowerShell: backend + Vite frontend.
+   أول تشغيل كيتطلب النت لتثبيت dependencies.
+   الموقع المحلي: http://localhost:5173 ، كيتفتح غالبا أوتوماتيكياً.
+5) باش تستعمل Cloudflare Tunnel اضغط ClipStudio - ONLINE فـ Desktop.
+   غادي يتحلو backend + cloudflared. احتافظ بجوج النوافذ مفتوحين.
+   الرابط المؤقت trycloudflare.com كيتبدّل كل مرة تسالي وتشعل من جديد.
+   تشغيل Tunnel لا يغيّر VITE_GENERATOR_API_URL ديال الموقع المنشور تلقائياً.
+   خاص عنوان HTTPS ثابت وإعدادات Cloudflare للموقع المنشور باش يولّي كلشي بضغطة وحدة بلا تبديل الروابط.
+   يمكن استعمال Tunnel مسمّى بالـ token الخاص بك: حضّر ملف .tunnel_token.local محلياً
+   فيه Token واحد من لوحة Cloudflare بعد ما تركب hostname ثابت وتربط Public Hostname
+   بالخدمة http://127.0.0.1:8765؛ ما ترفعوش أبداً لـ GitHub.
+6) منين تسالي أغلق جوج نوافذ PowerShell (أو Ctrl+C)، ثم تأكد أن الخدمات توقفت.
+
+فين تلقى مفاتيح Supabase:
+  Project Settings > Data API : Project URL
+  Project Settings > API Keys : Publishable key (sb_publishable_...)
+  استعمل نفس المشروع اللي فيه الحسابات ديال الموقع الحالي.
+  GitHub ماكيخزّنش هاد المفاتيح الخاصة محلياً؛ لذلك ضروري تدخلهم من جديد مرة وحدة.
+
+Supabase Auth: Site URL خاصو يبقى ديال الموقع المنشور، ما تبدلوش؛
+  زِد http://localhost:5173/** ضمن Redirect URLs إلا كنت محتاج Google Login محلياً.
+
+تنبيه مهم:
+ - تشغيل Python وFFmpeg كيحتاج CPU/RAM ونت؛ الفيديوهات اللي فالQueue كتضيع فالريستارت.
+ - لا تعطي لأي واحد secret key, service_role أو tunnel token.
+ - frontend ديال V26 محلي؛ Google AdSense script موجود لكن قبول الموقع للإعلانات غير مؤكد.
+ - إذا نقصات أحدث تغييرات backend من GitHub، تقدر تنزّل Download ZIP من GitHub وتحدّث الملفات لاحقاً
+   مع الاحتفاظ بملفات إعداداتك المحلية.
+
+Links: https://github.com/clipstudio-free/ClipStudio
+https://clipstudio.ahlaouirayane79.workers.dev
