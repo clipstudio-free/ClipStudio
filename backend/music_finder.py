@@ -39,17 +39,43 @@ def install_music_finder(app, current_user, validate_media_link):
                             if total > 50*1024*1024: raise HTTPException(413, 'Maximum upload: 50 MB.')
                             out.write(chunk)
                 else:
-                    subprocess.run([os.sys.executable, '-m', 'yt_dlp', '--ignore-config', '--no-playlist', '--no-warnings', '--socket-timeout', '15', '--max-filesize', '50M', '-f', 'bestaudio/best', '--download-sections', '*0-35', '-o', str(root/'source.%(ext)s'), '--', url], check=True, timeout=90, capture_output=True)
-                    sources = list(root.glob('source.*'))
-                    if len(sources)!=1 or sources[0].stat().st_size > 50*1024*1024: raise HTTPException(422, 'Source unavailable or too large.')
-                    source = sources[0]
+                    source = None
+                base = [os.sys.executable, '-m', 'yt_dlp', '--ignore-config', '--no-playlist', '--no-warnings', '--socket-timeout', '15', '--retries', '1']
+                if source:
+                    duration = float(subprocess.check_output(['ffprobe','-v','error','-protocol_whitelist','file,pipe','-show_entries','format=duration','-of','default=noprint_wrappers=1:nokey=1',str(source)],timeout=15).strip())
+                else:
+                    import json
+                    info = json.loads(subprocess.check_output(base+['--skip-download','--dump-single-json','--',url],timeout=45))
+                    if info.get('is_live') or info.get('_type') in ('playlist','multi_video'):
+                        raise HTTPException(400,'Choose a single recorded video.')
+                    duration = float(info.get('duration') or 0)
+                import math
+                if not math.isfinite(duration) or duration <= 0:
+                    raise HTTPException(422,'Could not determine audio duration.')
+                count = min(5, max(1, math.ceil(duration / 12)))
+                offsets = sorted(set(round(max(0,duration-12)*i/max(1,count-1),2) for i in range(count)))
                 results = {}
                 analyzed = 0
-                for offset in (0, 12, 24):
+                failed = 0
+                for offset in offsets:
                     sample = root / 'sample.mp3'
                     sample.unlink(missing_ok=True)
-                    subprocess.run(['ffmpeg','-nostdin','-v','error','-protocol_whitelist','file,pipe','-ss',str(offset),'-i',str(source),'-t','12','-vn','-ac','1','-ar','44100','-b:a','96k','-y',str(sample)],check=True,timeout=25,capture_output=True)
-                    if not sample.exists() or sample.stat().st_size < 1000: continue
+                    try:
+                        if source:
+                            clip = source
+                            seek = offset
+                        else:
+                            for old in root.glob('section.*'): old.unlink()
+                            subprocess.run(base+['--max-filesize','50M','-f','bestaudio/best','--download-sections',f'*{offset}-{min(duration,offset+12)}','-o',str(root/'section.%(ext)s'),'--',url],check=True,timeout=45,capture_output=True)
+                            clips = list(root.glob('section.*'))
+                            if len(clips)!=1 or clips[0].stat().st_size > 50*1024*1024: raise ValueError('Invalid section')
+                            clip = clips[0]
+                            seek = 0
+                        subprocess.run(['ffmpeg','-nostdin','-v','error','-protocol_whitelist','file,pipe','-ss',str(seek),'-i',str(clip),'-t','12','-vn','-ac','1','-ar','44100','-b:a','96k','-y',str(sample)],check=True,timeout=20,capture_output=True)
+                        if not sample.exists() or sample.stat().st_size < 1000: raise ValueError('Empty audio')
+                    except (subprocess.SubprocessError,OSError,ValueError):
+                        failed += 1
+                        continue
                     with sample.open('rb') as audio:
                         response = httpx.post('https://api.audd.io/',data={'api_token':token},files={'file':('sample.mp3',audio,'audio/mpeg')},timeout=25)
                     response.raise_for_status(); payload=response.json()
@@ -62,9 +88,11 @@ def install_music_finder(app, current_user, validate_media_link):
                     key=(title.casefold(),artist.casefold())
                     item=results.setdefault(key,{'title':title,'artist':artist,'matches':0,'youtube':'https://www.youtube.com/results?'+urlencode({'search_query':artist+' '+title}),'spotify':'https://open.spotify.com/search/'+__import__('urllib.parse',fromlist=['quote']).quote(artist+' '+title,safe='')})
                     item['matches']+=1
+                    item.setdefault('timestamps',[]).append(offset)
+                if not analyzed: raise HTTPException(422,'Could not extract any audio samples. Try a direct video link or upload audio.')
                 for item in results.values():
                     item['sample_match_percent'] = round(100 * item['matches'] / analyzed) if analyzed else None
-                return {'tracks':sorted(results.values(),key=lambda x:-x['matches']), 'samples_analyzed':analyzed}
+                return {'tracks':sorted(results.values(),key=lambda x:-x['matches']), 'samples_analyzed':analyzed,'samples_planned':len(offsets),'samples_failed':failed,'duration_seconds':duration}
         except HTTPException: raise
         except (subprocess.SubprocessError, OSError, httpx.HTTPError, ValueError): raise HTTPException(422,'Audio extraction or recognition failed. Try uploading a short audio file.')
         finally: _gate.release()
