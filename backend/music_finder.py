@@ -15,7 +15,11 @@ def install_music_finder(app, current_user, validate_media_link):
         token = os.getenv('AUDD_API_TOKEN', '').strip()
         if not token:
             raise HTTPException(503, 'Music recognition service is not configured.')
-        if url: url, _ = validate_media_link(url)
+        if url:
+            url, _ = validate_media_link(url)
+            from urllib.parse import urlparse
+            if urlparse(url).path.rstrip('/') == '/playlist':
+                raise HTTPException(400, 'Choose a single video, not a playlist.')
         if not _gate.acquire(blocking=False):
             raise HTTPException(429, 'Music Finder is busy. Try again shortly.')
         try:
@@ -40,6 +44,7 @@ def install_music_finder(app, current_user, validate_media_link):
                     if len(sources)!=1 or sources[0].stat().st_size > 50*1024*1024: raise HTTPException(422, 'Source unavailable or too large.')
                     source = sources[0]
                 results = {}
+                analyzed = 0
                 for offset in (0, 12, 24):
                     sample = root / 'sample.mp3'
                     sample.unlink(missing_ok=True)
@@ -49,6 +54,7 @@ def install_music_finder(app, current_user, validate_media_link):
                         response = httpx.post('https://api.audd.io/',data={'api_token':token},files={'file':('sample.mp3',audio,'audio/mpeg')},timeout=25)
                     response.raise_for_status(); payload=response.json()
                     if payload.get('status') != 'success': raise HTTPException(502,'Recognition provider rejected the request.')
+                    analyzed += 1
                     hit=payload.get('result')
                     if not isinstance(hit,dict): continue
                     title=str(hit.get('title') or '')[:200]; artist=str(hit.get('artist') or '')[:200]
@@ -56,7 +62,9 @@ def install_music_finder(app, current_user, validate_media_link):
                     key=(title.casefold(),artist.casefold())
                     item=results.setdefault(key,{'title':title,'artist':artist,'matches':0,'youtube':'https://www.youtube.com/results?'+urlencode({'search_query':artist+' '+title}),'spotify':'https://open.spotify.com/search/'+__import__('urllib.parse',fromlist=['quote']).quote(artist+' '+title,safe='')})
                     item['matches']+=1
-                return {'tracks':sorted(results.values(),key=lambda x:-x['matches'])}
+                for item in results.values():
+                    item['sample_match_percent'] = round(100 * item['matches'] / analyzed) if analyzed else None
+                return {'tracks':sorted(results.values(),key=lambda x:-x['matches']), 'samples_analyzed':analyzed}
         except HTTPException: raise
         except (subprocess.SubprocessError, OSError, httpx.HTTPError, ValueError): raise HTTPException(422,'Audio extraction or recognition failed. Try uploading a short audio file.')
         finally: _gate.release()
