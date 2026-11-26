@@ -16,7 +16,7 @@ def install_music_finder(app, current_user, validate_media_link):
         if not token:
             raise HTTPException(503, 'Music recognition service is not configured.')
         if url:
-            url, _ = validate_media_link(url)
+            url, platform = validate_media_link(url)
             from urllib.parse import urlparse
             if urlparse(url).path.rstrip('/') == '/playlist':
                 raise HTTPException(400, 'Choose a single video, not a playlist.')
@@ -41,6 +41,20 @@ def install_music_finder(app, current_user, validate_media_link):
                 else:
                     source = None
                 base = [os.sys.executable, '-m', 'yt_dlp', '--ignore-config', '--no-playlist', '--no-warnings', '--socket-timeout', '15', '--retries', '1']
+                def download_local():
+                    # Single bounded download; FFmpeg samples the local file.
+                    for old in root.glob('fallback.*'): old.unlink()
+                    subprocess.run(base+['--max-filesize','50M','--no-part','-f','bestaudio[protocol=https]/best[protocol=https]/bestaudio/best','-o',str(root/'fallback.%(ext)s'),'--',url],check=True,timeout=90,capture_output=True)
+                    files = [p for p in root.glob('fallback.*') if p.is_file()]
+                    if len(files)!=1 or not 0 < files[0].stat().st_size <= 50*1024*1024:
+                        raise ValueError('Invalid downloaded media')
+                    return files[0]
+                if not source and platform != 'youtube':
+                    try:
+                        source = download_local()
+                    except (subprocess.SubprocessError,OSError,ValueError) as exc:
+                        print('Music Finder: platform download failed:',platform,type(exc).__name__,flush=True)
+                        raise HTTPException(422,'Could not download this public video. Try its full link or upload the audio/video.') from exc
                 if source:
                     duration = float(subprocess.check_output(['ffprobe','-v','error','-protocol_whitelist','file,pipe','-show_entries','format=duration','-of','default=noprint_wrappers=1:nokey=1',str(source)],timeout=15).strip())
                 else:
@@ -73,7 +87,8 @@ def install_music_finder(app, current_user, validate_media_link):
                             seek = 0
                         subprocess.run(['ffmpeg','-nostdin','-v','error','-protocol_whitelist','file,pipe','-ss',str(seek),'-i',str(clip),'-t','12','-vn','-ac','1','-ar','44100','-b:a','96k','-y',str(sample)],check=True,timeout=20,capture_output=True)
                         if not sample.exists() or sample.stat().st_size < 1000: raise ValueError('Empty audio')
-                    except (subprocess.SubprocessError,OSError,ValueError):
+                    except (subprocess.SubprocessError,OSError,ValueError) as exc:
+                        print('Music Finder: sample extraction failed:',type(exc).__name__,flush=True)
                         failed += 1
                         continue
                     with sample.open('rb') as audio:
