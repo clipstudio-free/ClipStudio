@@ -1224,3 +1224,8 @@ async def caption_render_endpoint(file:UploadFile=File(...),cues:str=Form(...),
     except Exception:
         shutil.rmtree(folder,ignore_errors=True)
         raise
+
+
+# Register Music Finder AI routes.
+from music_finder import install_music_finder
+install_music_finder(app, current_user, validate_media_link)
