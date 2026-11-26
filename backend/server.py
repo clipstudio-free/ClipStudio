@@ -512,6 +512,28 @@ def short_layout_filter(layout, face, subtitle=True):
         composite=f'[game][cam]overlay=0:{ypos}'
     return ';'.join([game,cam,composite+(',ass=clip%d.ass' % subtitle if isinstance(subtitle,int) and subtitle else '')+'[vout]'])
 
+def branded_short_graph(graph, folder):
+    # Use the same original icon as the website; no remote download at render time.
+    logo = next((p for p in (ROOT/'favicon.png', ROOT.parent/'public'/'favicon.png', ROOT.parent/'favicon.png') if p.is_file()), None)
+    if logo is None:
+        raise RuntimeError('ClipStudio logo missing: copy public/favicon.png to backend/favicon.png')
+    ass = folder/'clipstudio_brand.ass'
+    ass.write_text(r"""[Script Info]
+ScriptType: v4.00+
+PlayResX: 720
+PlayResY: 1280
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Brand,Arial,38,&H00FFFFFF,&H00FFFFFF,&H80000000,&H80000000,-1,0,0,0,100,100,0,0,1,1,0,4,0,0,0,1
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.35,0:00:02.70,Brand,,0,0,0,,{\move(270,640,315,640,0,450)\clip(315,580,710,700)\fad(180,450)}ClipStudio
+""", encoding='utf-8')
+    x="if(lt(t,0.35),(W-w)/2,if(lt(t,0.8),(W-w)/2-100*(t-0.35)/0.45,if(lt(t,2.7),(W-w)/2-100,if(lt(t,3.1),(W-w)/2-100+100*(t-2.7)/0.4,(W-w)/2))))"
+    graph=graph.replace('[vout]','[base]')
+    graph += ";[base]ass=clipstudio_brand.ass[brandtext];[1:v]scale=64:64:force_original_aspect_ratio=decrease,pad=64:64:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba,colorchannelmixer=aa=0.55[brandlogo];[brandtext][brandlogo]overlay=x='"+x+"':y=(H-h)/2:shortest=1[vout]"
+    return graph, str(logo)
+
 def generate(job,source,seconds,uid,is_upload=False,caption_config=None,layout="auto"):
     folder=WORK/job;folder.mkdir(exist_ok=True)
     try:
@@ -574,9 +596,9 @@ def generate(job,source,seconds,uid,is_upload=False,caption_config=None,layout="
             subtitle=folder/f'clip{i}.ass';captions(words,start,start+clip_len,subtitle,**(caption_config or {}))
             output=folder/f'clip{i}.mp4'
             face=detect_streamer_facecam(video,start,clip_len,job) if layout!='gameplay' else None
-            graph=short_layout_filter(layout,face,subtitle=i)
+            graph, brand_logo=branded_short_graph(short_layout_filter(layout,face,subtitle=i),folder)
             cmd=['ffmpeg','-hide_banner','-loglevel','error','-nostats',
-                 '-progress','pipe:1','-y','-ss',str(start),'-i',str(video),'-t',str(clip_len),
+                 '-progress','pipe:1','-y','-ss',str(start),'-i',str(video),'-loop','1','-framerate','25','-i',brand_logo,'-t',str(clip_len),
                  '-filter_complex',graph,'-map','[vout]','-map','0:a:0?',
                  '-r','25','-c:v','libx264','-preset','veryfast','-crf','25',
                  '-c:a','aac','-b:a','128k',str(output)]
@@ -594,8 +616,9 @@ def generate(job,source,seconds,uid,is_upload=False,caption_config=None,layout="
                 raise RuntimeError(f'Short {i} did not produce an MP4 file')
             # Keep an uncaptioned version for later text editing; the standard clip remains captioned.
             clean=folder/f'clip{i}.clean.mp4'
-            clean_cmd=['ffmpeg','-hide_banner','-loglevel','error','-y','-ss',str(start),'-i',str(video),'-t',str(clip_len),
-                       '-filter_complex',short_layout_filter(layout,face,subtitle=False),'-map','[vout]','-map','0:a:0?',
+            clean_graph, brand_logo=branded_short_graph(short_layout_filter(layout,face,subtitle=False),folder)
+            clean_cmd=['ffmpeg','-hide_banner','-loglevel','error','-y','-ss',str(start),'-i',str(video),'-loop','1','-framerate','25','-i',brand_logo,'-t',str(clip_len),
+                       '-filter_complex',clean_graph,'-map','[vout]','-map','0:a:0?',
                        '-r','25','-c:v','libx264','-preset','veryfast','-crf','25','-c:a','aac','-b:a','128k',str(clean)]
             ffmpeg_with_cancel(clean_cmd,job,cwd=str(folder))
             cue_data=[{'start':round(max(0,float(w['start'])-start),2),'end':round(min(clip_len,float(w['end'])-start),2),

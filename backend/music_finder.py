@@ -33,20 +33,17 @@ def install_music_finder(app, current_user, validate_media_link):
                 if file:
                     source = root / 'upload.media'
                     with source.open('wb') as out:
-                        total = 0
                         while chunk := file.file.read(1024*1024):
-                            total += len(chunk)
-                            if total > 50*1024*1024: raise HTTPException(413, 'Maximum upload: 50 MB.')
                             out.write(chunk)
                 else:
                     source = None
                 base = [os.sys.executable, '-m', 'yt_dlp', '--ignore-config', '--no-playlist', '--no-warnings', '--socket-timeout', '15', '--retries', '1']
                 def download_local():
-                    # Single bounded download; FFmpeg samples the local file.
+                    # Single local download; FFmpeg samples the local file.
                     for old in root.glob('fallback.*'): old.unlink()
-                    subprocess.run(base+['--max-filesize','50M','--no-part','-f','bestaudio[protocol=https]/best[protocol=https]/bestaudio/best','-o',str(root/'fallback.%(ext)s'),'--',url],check=True,timeout=90,capture_output=True)
+                    subprocess.run(base+['--no-part','-f','bestaudio[protocol=https]/best[protocol=https]/bestaudio/best','-o',str(root/'fallback.%(ext)s'),'--',url],check=True,timeout=7200,capture_output=True)
                     files = [p for p in root.glob('fallback.*') if p.is_file()]
-                    if len(files)!=1 or not 0 < files[0].stat().st_size <= 50*1024*1024:
+                    if len(files)!=1 or not 0 < files[0].stat().st_size:
                         raise ValueError('Invalid downloaded media')
                     return files[0]
                 if not source and platform != 'youtube':
@@ -80,9 +77,9 @@ def install_music_finder(app, current_user, validate_media_link):
                             seek = offset
                         else:
                             for old in root.glob('section.*'): old.unlink()
-                            subprocess.run(base+['--max-filesize','50M','-f','bestaudio/best','--download-sections',f'*{offset}-{min(duration,offset+12)}','-o',str(root/'section.%(ext)s'),'--',url],check=True,timeout=45,capture_output=True)
+                            subprocess.run(base+['-f','bestaudio/best','--download-sections',f'*{offset}-{min(duration,offset+12)}','-o',str(root/'section.%(ext)s'),'--',url],check=True,timeout=45,capture_output=True)
                             clips = list(root.glob('section.*'))
-                            if len(clips)!=1 or clips[0].stat().st_size > 50*1024*1024: raise ValueError('Invalid section')
+                            if len(clips)!=1 or clips[0].stat().st_size == 0: raise ValueError('Invalid section')
                             clip = clips[0]
                             seek = 0
                         subprocess.run(['ffmpeg','-nostdin','-v','error','-protocol_whitelist','file,pipe','-ss',str(seek),'-i',str(clip),'-t','12','-vn','-ac','1','-ar','44100','-b:a','96k','-y',str(sample)],check=True,timeout=20,capture_output=True)
@@ -109,5 +106,5 @@ def install_music_finder(app, current_user, validate_media_link):
                     item['sample_match_percent'] = round(100 * item['matches'] / analyzed) if analyzed else None
                 return {'tracks':sorted(results.values(),key=lambda x:-x['matches']), 'samples_analyzed':analyzed,'samples_planned':len(offsets),'samples_failed':failed,'duration_seconds':duration}
         except HTTPException: raise
-        except (subprocess.SubprocessError, OSError, httpx.HTTPError, ValueError): raise HTTPException(422,'Audio extraction or recognition failed. Try uploading a short audio file.')
+        except (subprocess.SubprocessError, OSError, httpx.HTTPError, ValueError): raise HTTPException(422,'Audio extraction or recognition failed. Try uploading an audio or video file.')
         finally: _gate.release()
