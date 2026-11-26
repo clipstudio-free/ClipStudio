@@ -1,3 +1,4 @@
+import { mountMusicFinder } from './music-finder.js';
 import {createClient} from '@supabase/supabase-js';
 import {FFmpeg} from '@ffmpeg/ffmpeg';
 import {fetchFile,toBlobURL} from '@ffmpeg/util';
