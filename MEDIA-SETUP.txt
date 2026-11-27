@@ -1,0 +1,2 @@
+Replace the included src files and upload public/media as provided. Keep all other repository files and existing public images. No backend changes.
+studio.mp4 and login.mp4: original programmatic illustrative promotional animations, not actual screen recordings. Koutoubia.mp4: animated existing site image, not live footage. All silent H.264 MP4. Google sign-in retains its existing functionality and multicolor icon. Browser and deployed backend not tested.
