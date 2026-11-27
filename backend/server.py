@@ -27,6 +27,13 @@ app=FastAPI(title='ClipStudio generator API', docs_url=None, redoc_url=None,
 ORIGINS=[x.strip() for x in os.getenv('ALLOWED_ORIGINS','http://localhost:5173,http://127.0.0.1:5173').split(',') if x.strip()]
 app.add_middleware(CORSMiddleware,allow_origins=ORIGINS,allow_methods=['GET','POST'],allow_headers=['Authorization','Content-Type'])
 jobs={}
+playlist_batches={}
+PLAYLIST_BATCH_LIMIT=100
+PLAYLIST_DAILY_LIMIT=max(100,min(1000,int(os.getenv("MAX_PLAYLIST_VIDEOS_PER_DAY","200"))))
+PLAYLIST_FILE_TTL=86400
+PLAYLIST_ZIP_MAX_BYTES=2*1024**3
+PLAYLIST_DISK_RESERVE=2*1024**3
+playlist_zip_slots=threading.BoundedSemaphore(1)
 lock=threading.Lock()
 # Count outstanding jobs per user (queued + running); do not exclude other users.
 active_users={}
@@ -77,7 +84,7 @@ def cancelled_job(job_id,uid,kind,is_upload=False):
     job=jobs.get(job_id)
     if job and job.get('status')!='cancelled':
         job.update(status='cancelled',progress='Cancelled; resources released',finished_at=time.time())
-        refund_work(uid,job['quota_day'],kind)
+        refund_work(uid,job['quota_day'],job.get('quota_kind',kind))
     finish_user(uid,is_upload)
     shutil.rmtree(WORK/job_id,ignore_errors=True)
 
@@ -134,8 +141,10 @@ def current_user(authorization: str|None=Header(None)):
 def cleanup():
     now=time.time()
     with lock:
-        expired=[key for key,job in jobs.items() if job['status'] in ('done','error','cancelled') and now-job.get('finished_at',job['created'])>JOB_TTL]
+        expired=[key for key,job in jobs.items() if job['status'] in ('done','error','cancelled') and now-job.get('finished_at',job['created'])>(PLAYLIST_FILE_TTL if job.get('playlist_batch') else JOB_TTL)]
         for key in expired:jobs.pop(key,None)
+        for key,batch in list(playlist_batches.items()):
+            if not any(j in jobs for j in batch["jobs"]):playlist_batches.pop(key,None)
         for key in list(usage):
             if key[1]!=datetime.now(timezone.utc).date().isoformat():usage.pop(key,None)
     for key in expired:shutil.rmtree(WORK/key,ignore_errors=True)
@@ -150,11 +159,11 @@ def abandoned_job_monitor():
                 if data.get('status') in ('done','error','cancelled'):continue
                 if now-data.get('last_seen',data['created'])<=JOB_HEARTBEAT_TIMEOUT:continue
                 data['cancel_requested']=True
-                if data['status']=='queued':
+                if data['status'] in ('queued','playlist_waiting'):
                     data.update(status='cancelled',progress='Browser disconnected',finished_at=now)
                     kind=data.get('kind','shorts')
                     if job_id in waiting_jobs[kind]:waiting_jobs[kind].remove(job_id)
-                    expired_queued.append((job_id,data['owner'],data['quota_day'],kind,data.get('is_upload',False)))
+                    expired_queued.append((job_id,data['owner'],data['quota_day'],data.get('quota_kind',kind),data.get('is_upload',False)))
         for job_id,uid,day,kind,is_upload in expired_queued:
             refund_work(uid,day,kind)
             finish_user(uid,is_upload)
@@ -231,6 +240,7 @@ def worker_loop(kind):
                 jobs[job_id].update(status='starting', progress='Processing your request')
         if skip:
             target_queue.task_done()
+            advance_playlist(jobs.get(job_id,{}).get('playlist_batch'))
             continue
         try:
             if kind == 'shorts':
@@ -252,10 +262,11 @@ def worker_loop(kind):
                 else:
                     quota_day=owner=is_upload=None
             if owner:
-                refund_work(owner, quota_day, kind)
+                refund_work(owner, quota_day, job.get("quota_kind",kind))
                 finish_user(owner, is_upload=bool(is_upload))
         finally:
             target_queue.task_done()
+            advance_playlist(jobs.get(job_id,{}).get("playlist_batch"))
 
 def start_worker_pools():
     global worker_pools_started
@@ -735,13 +746,13 @@ def cancel_job(job:str,uid:str=Depends(current_user)):
         if data['status'] in ('done','error','cancelled'):
             return {'status':data['status']}
         data['cancel_requested']=True
-        queued=data['status']=='queued'
+        queued=data['status'] in ('queued','playlist_waiting')
         if queued:
             kind=data.get('kind','shorts')
             if job in waiting_jobs[kind]:waiting_jobs[kind].remove(job)
             data.update(status='cancelled',progress='Cancelled before processing',finished_at=time.time())
     if queued:
-        refund_work(uid,data['quota_day'],kind)
+        refund_work(uid,data['quota_day'],data.get('quota_kind',kind))
         finish_user(uid,data.get('is_upload',False))
         shutil.rmtree(WORK/job,ignore_errors=True)
     return {'status':'cancelled' if queued else 'cancelling'}
@@ -881,32 +892,127 @@ def admin_cancel_job(job:str,uid:str=Depends(admin_user)):
         item['cancel_requested']=True
     return {'status':'cancelling'}
 
+def advance_playlist(batch_id):
+    """Release one playlist video at a time into the existing shared worker pool."""
+    if not batch_id:return
+    with lock:
+        batch=playlist_batches.get(batch_id)
+        if not batch or batch.get('cancelled'):return
+        items=[(j,jobs[j]) for j in batch['jobs'] if j in jobs]
+        if any(d['status'] not in ('playlist_waiting','done','error','cancelled') for _,d in items):return
+        candidate=next(((j,d) for j,d in items if d['status']=='playlist_waiting' and not d.get('cancel_requested')),None)
+        if not candidate:return
+        j,d=candidate
+        d.update(status='queued',progress='Waiting for a download worker')
+        waiting_jobs['downloads'].append(j)
+        args=(j,d['source_url'],d['media_format'],d['quality'],d['owner'])
+    downloads_queue.put((j,args))
+
 @app.post('/media/playlist/download')
-def playlist_batch(url:str=Form(...),quality:int=Form(720),
+def playlist_batch(url:str=Form(...),quality:int=Form(720),format:str=Form('mp4'),
                    rights_confirmed:bool=Form(False),video_ids:str=Form('[]'),
                    uid:str=Depends(current_user)):
     if not rights_confirmed:raise HTTPException(400,'Confirm rights to every selected video')
-    if quality not in VIDEO_QUALITIES:raise HTTPException(400,'Unsupported quality')
+    if quality not in VIDEO_QUALITIES or format not in ('mp4','mp3'):raise HTTPException(400,'Unsupported format or quality')
     try:ids=json.loads(video_ids)
     except (ValueError,TypeError):raise HTTPException(400,'Invalid video selection')
-    if not isinstance(ids,list) or not ids or len(ids)>25 or any(not isinstance(x,str) or not re.fullmatch(r'[A-Za-z0-9_-]{11}',x) for x in ids):
-        raise HTTPException(400,'Select 1–25 video IDs per queue request')
+    if not isinstance(ids,list) or not ids or len(ids)>PLAYLIST_BATCH_LIMIT or any(not isinstance(x,str) or not re.fullmatch(r'[A-Za-z0-9_-]{11}',x) for x in ids):
+        raise HTTPException(400,'Select 1–100 video IDs per batch')
+    if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):raise HTTPException(503,'FFmpeg and ffprobe are required')
     info=playlist_preview(url,uid)
     by_id={item['id']:item for item in info['entries']}
-    accepted=[];failures=[]
-    for vid in dict.fromkeys(ids):
-        item=by_id.get(vid)
-        if not item:
-            failures.append({'title':vid,'reason':'Video is not in this playlist or is unavailable'})
-            continue
-        try:
-            result=media_download(url=item['url'],format='mp4',quality=quality,
-                                  rights_confirmed=True,uid=uid)
-            accepted.append({'title':item['title'],'job_id':result['job_id']})
-        except HTTPException as exc:
-            failures.append({'title':item['title'],'reason':str(exc.detail)})
-            if exc.status_code in (429,503):break
-    return {'accepted':accepted,'failures':failures}
+    selected=[by_id[v] for v in dict.fromkeys(ids) if v in by_id]
+    failures=[{'id':v,'title':v,'reason':'Video unavailable or no longer in playlist'} for v in dict.fromkeys(ids) if v not in by_id]
+    if not selected:raise HTTPException(422,'No selected videos are available')
+    cleanup()
+    day=utc_day(); key=(uid,day,'playlist'); batch_id=uuid.uuid4().hex
+    prepared=[]
+    try:
+        for item in selected:
+            j=uuid.uuid4().hex
+            (WORK/j).mkdir(exist_ok=False)
+            prepared.append((j,item))
+        with lock:
+            if active_users.get(uid,0)>=MAX_JOBS_PER_USER:raise HTTPException(429,'Another request is active. Finish it before starting a playlist batch.')
+            if sum(active_users.values())+len(prepared)>MAX_ACCEPTED_JOBS:raise HTTPException(503,'Queue capacity is insufficient. Select fewer videos or try later.')
+            remaining=PLAYLIST_DAILY_LIMIT-usage.get(key,0)
+            if len(prepared)>remaining:raise HTTPException(429,f'Playlist daily limit: {remaining} videos remaining today. Select fewer or return after 00:00 UTC.')
+            now=time.time()
+            active_users[uid]=active_users.get(uid,0)+len(prepared)
+            usage[key]=usage.get(key,0)+len(prepared)
+            playlist_batches[batch_id]={'owner':uid,'jobs':[j for j,_ in prepared],'title':info['title'],'failures':failures,'cancelled':False,'zip_token':secrets.token_urlsafe(24),'zip_expires':now+PLAYLIST_FILE_TTL}
+            for j,item in prepared:
+                jobs[j]={'owner':uid,'created':now,'last_seen':now,'quota_day':day,'quota_kind':'playlist','kind':'downloads','platform':'youtube','playlist_batch':batch_id,'video_id':item['id'],'title':item['title'],'source_url':item['url'],'media_format':format,'quality':quality,'status':'playlist_waiting','progress':'Waiting for previous video','percent':0}
+    except Exception:
+        for j,_ in prepared:shutil.rmtree(WORK/j,ignore_errors=True)
+        raise
+    advance_playlist(batch_id)
+    return {'batch_id':batch_id,'accepted':[{'id':item['id'],'title':item['title'],'job_id':j} for j,item in prepared],'failures':failures}
+
+@app.get('/media/playlist/batches/{batch_id}')
+def playlist_batch_status(batch_id:str,uid:str=Depends(current_user)):
+    cleanup()
+    with lock:
+        batch=playlist_batches.get(batch_id)
+        if not batch or batch['owner']!=uid:raise HTTPException(404,'Playlist batch expired or not found')
+        result=[]; now=time.time()
+        for j in batch['jobs']:
+            d=jobs.get(j)
+            if not d:
+                result.append({'job_id':j,'status':'error','progress':'File expired'})
+                continue
+            if d['status'] not in ('done','error','cancelled'):d['last_seen']=now
+            result.append({'job_id':j,**{k:d[k] for k in ('video_id','title','status','progress','percent','url','filename','size_bytes') if k in d}})
+        terminal=all(x['status'] in ('done','error','cancelled') for x in result)
+        completed=[x for x in result if x['status']=='done']
+        size=sum(x.get('size_bytes',0) for x in completed)
+        zip_url=None
+        if terminal and completed and size<=PLAYLIST_ZIP_MAX_BYTES and now<batch['zip_expires']:
+            zip_url=f'/media/playlist/archive/{batch_id}/{batch["zip_token"]}'
+        return {'title':batch['title'],'items':result,'failures':batch['failures'],'zip_url':zip_url}
+
+@app.get('/media/playlist/archive/{batch_id}/{token}')
+def playlist_archive(batch_id:str,token:str):
+    cleanup()
+    with lock:
+        batch=playlist_batches.get(batch_id)
+        if not batch or time.time()>batch['zip_expires'] or not hmac.compare_digest(token,batch['zip_token']):raise HTTPException(404,'Archive link expired or invalid')
+        items=[(j,dict(jobs[j])) for j in batch['jobs'] if j in jobs]
+    if any(d['status'] not in ('done','error','cancelled') for _,d in items):raise HTTPException(409,'Batch still processing')
+    done=[(j,d) for j,d in items if d['status']=='done']
+    total=sum(d.get('size_bytes',0) for _,d in done)
+    if not done or total>PLAYLIST_ZIP_MAX_BYTES:raise HTTPException(400,'ZIP available only for completed files up to 2 GiB. Download files individually.')
+    if shutil.disk_usage(WORK).free<total+PLAYLIST_DISK_RESERVE:raise HTTPException(507,'Not enough free disk space for ZIP. Download files individually.')
+    if not playlist_zip_slots.acquire(blocking=False):raise HTTPException(503,'Another archive is being prepared. Try again shortly.')
+    folder=WORK/('playlist_zip_'+uuid.uuid4().hex)
+    def release():
+        shutil.rmtree(folder,ignore_errors=True)
+        playlist_zip_slots.release()
+    try:
+        folder.mkdir()
+        path=folder/'playlist.zip'
+        with zipfile.ZipFile(path,'w',compression=zipfile.ZIP_STORED,allowZip64=True) as archive:
+            for i,(j,d) in enumerate(done,1):
+                source=WORK/j/d['download_file']
+                if not source.is_file():raise HTTPException(404,'A completed file has expired')
+                title=re.sub(r'[^\w .-]','_',d.get('title','video')).strip(' .')[:100] or 'video'
+                archive.write(source,f'{i:03d}-{title}-{d["video_id"]}{source.suffix}')
+        return FileResponse(path,media_type='application/zip',filename='clipstudio-playlist.zip',background=BackgroundTask(release))
+    except Exception:
+        release()
+        raise
+
+@app.post('/media/playlist/batches/{batch_id}/cancel')
+def cancel_playlist_batch(batch_id:str,uid:str=Depends(current_user)):
+    with lock:
+        batch=playlist_batches.get(batch_id)
+        if not batch or batch['owner']!=uid:raise HTTPException(404,'Playlist batch not found')
+        batch['cancelled']=True
+        ids=list(batch['jobs'])
+    for j in ids:
+        try:cancel_job(j,uid)
+        except HTTPException:pass
+    return {'status':'cancelling'}
 
 @app.get('/my/jobs')
 def my_jobs(uid:str=Depends(current_user)):
@@ -998,10 +1104,15 @@ def run_media_download(job,url,media_format,quality,uid):
     folder=WORK/job
     try:
         check_cancel(job)
+        def check_playlist_disk():
+            if jobs[job].get('playlist_batch') and shutil.disk_usage(WORK).free<PLAYLIST_DISK_RESERVE:
+                raise RuntimeError('Not enough free server disk space. Try later or use smaller files.')
+        check_playlist_disk()
         _,platform=validate_media_link(url)
         jobs[job].update(status='downloading',progress=f'Connecting to {platform.title()}',percent=0)
         def hook(update):
             check_cancel(job)
+            check_playlist_disk()
             if update.get('status')=='downloading':
                 total=update.get('total_bytes') or update.get('total_bytes_estimate')
                 so_far=update.get('downloaded_bytes',0)
@@ -1053,8 +1164,10 @@ def run_media_download(job,url,media_format,quality,uid):
             source=max(source_candidates,key=lambda p:p.stat().st_size)
             output=folder/'download.mp4'
             jobs[job].update(status='processing',progress='Encoding compatible MP4 video (H.264 + AAC)',percent=70)
-            normalize_download_mp4(source,output,quality,
-                                   lambda pct: jobs[job].update(percent=max(jobs[job]['percent'],pct)),job)
+            def encode_progress(pct):
+                check_playlist_disk()
+                jobs[job].update(percent=max(jobs[job]['percent'],pct))
+            normalize_download_mp4(source,output,quality,encode_progress,job)
             source.unlink(missing_ok=True)
         if output.stat().st_size>MAX_VIDEO_FILE_BYTES:
             raise RuntimeError('File larger than 5 GiB. Choose a lower quality.')
@@ -1063,7 +1176,7 @@ def run_media_download(job,url,media_format,quality,uid):
         name=f'clipstudio-{platform}-{(str(quality)+"p-") if ext=="mp4" else ""}video.{ext}' if ext=='mp4' else f'clipstudio-{platform}-audio.{ext}'
         jobs[job].update(status='done',progress='Ready to download',percent=100,
                          download_file=output.name,download_token=token,
-                         token_expiry=time.time()+1800,finished_at=time.time(),
+                         token_expiry=time.time()+(PLAYLIST_FILE_TTL if jobs[job].get("playlist_batch") else 1800),finished_at=time.time(),
                          platform=platform,url=f'/media/file/{job}/{token}',filename=name,
                          size_bytes=output.stat().st_size)
     except CancelledJob:
@@ -1074,8 +1187,9 @@ def run_media_download(job,url,media_format,quality,uid):
             cancelled_job(job,uid,'downloads')
             return
         traceback.print_exc()
-        refund_work(uid,jobs[job]['quota_day'],'downloads')
+        refund_work(uid,jobs[job]['quota_day'],jobs[job].get('quota_kind','downloads'))
         jobs[job].update(status='error',progress=str(e)[:400],finished_at=time.time())
+        if jobs[job].get('playlist_batch'):shutil.rmtree(folder,ignore_errors=True)
     finally:
         if jobs.get(job,{}).get('status')!='cancelled':finish_user(uid)
 
