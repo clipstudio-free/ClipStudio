@@ -1,0 +1,5 @@
+ClipStudio Ocean AI V6 — incremental update, not a standalone repository.
+Back up your current GitHub repo and local backend first.
+GitHub: merge src/, public/, backend/ and index.html into existing repository. Keep existing src/style.css, i18n.js, package files, configuration, ads.txt and other assets. Do not delete existing files.
+Local Windows server: copy backend/server.py, backend/music_finder.py and backend/favicon.png into existing backend folder. Keep .env.local, .venv and start_windows.bat. Restart server.
+The original CSS and full repository were not available, so the additive Ocean CSS has not been browser-tested against the full project. Existing routes and event handlers are retained. Hero illustrations are cropped from the approved mockup; favicon is a new vector scissors design. Existing demo is retained. The server is the previous top-right watermark build; browser editor retains its previous watermark behavior. No live exports, authentication, AudD or deployment tests were performed. Python and JS syntax checks passed.
