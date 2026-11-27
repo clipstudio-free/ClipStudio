@@ -527,11 +527,11 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: Brand,Arial,38,&H00FFFFFF,&H00FFFFFF,&H80000000,&H80000000,-1,0,0,0,100,100,0,0,1,1,0,4,0,0,0,1
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-Dialogue: 0,0:00:00.35,0:00:02.70,Brand,,0,0,0,,{\move(270,640,315,640,0,450)\clip(315,580,710,700)\fad(180,450)}ClipStudio
+Dialogue: 0,0:00:00.35,0:00:02.70,Brand,,0,0,0,,{\move(480,56,505,56,0,450)\clip(505,16,700,96)\fad(180,450)}ClipStudio
 """, encoding='utf-8')
-    x="if(lt(t,0.35),(W-w)/2,if(lt(t,0.8),(W-w)/2-100*(t-0.35)/0.45,if(lt(t,2.7),(W-w)/2-100,if(lt(t,3.1),(W-w)/2-100+100*(t-2.7)/0.4,(W-w)/2))))"
+    x="if(lt(t,0.35),W-w-24,if(lt(t,0.8),W-w-24-205*(t-0.35)/0.45,if(lt(t,2.7),W-w-24-205,if(lt(t,3.1),W-w-24-205+205*(t-2.7)/0.4,W-w-24))))"
     graph=graph.replace('[vout]','[base]')
-    graph += ";[base]ass=clipstudio_brand.ass[brandtext];[1:v]scale=64:64:force_original_aspect_ratio=decrease,pad=64:64:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba,colorchannelmixer=aa=0.55[brandlogo];[brandtext][brandlogo]overlay=x='"+x+"':y=(H-h)/2:shortest=1[vout]"
+    graph += ";[base]ass=clipstudio_brand.ass[brandtext];[1:v]scale=64:64:force_original_aspect_ratio=decrease,pad=64:64:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba,colorchannelmixer=aa=0.55[brandlogo];[brandtext][brandlogo]overlay=x='"+x+"':y=24:shortest=1[vout]"
     return graph, str(logo)
 
 def generate(job,source,seconds,uid,is_upload=False,caption_config=None,layout="auto"):
